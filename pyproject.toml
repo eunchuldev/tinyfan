@@ -1,0 +1,75 @@
+[project]
+name = "tinyfan"
+version = "0.0.1"
+description = 'Tiny Argo Workflows python devkit'
+readme = "README.md"
+requires-python = ">=3.12"
+keywords = [
+  "argo-workflow",
+  "tinyfan",
+  "workflow",
+  "pipeline",
+]
+authors = [
+  { name = "eunchuldev", email = "eunchulsong@gmail.com" },
+]
+classifiers = [
+  "Operating System :: OS Independent",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "croniter>=3.0.3",
+    "pyyaml>=6.0.2",
+    "typer-slim>=0.15.1",
+]
+
+[project.scripts]
+tinyfan = "tinyfan.cli:main"
+
+[project.optional-dependencies]
+all = [
+  "tinyfan[gcp]",
+  "tinyfan[pandas]",
+]
+gcp = [
+  "google-cloud-storage",
+  "google-cloud-bigquery[pandas]",
+]
+pandas = [
+  "pandas",
+  "pyarrow",
+]
+dev = [
+  "pytest >= 8.3.3",
+  "jsonpatch>=1",
+  "jsonschema[format]",
+  "mypy>=1.12",
+  "ruff",
+  "types-PyYAML",
+  "types-jsonschema",
+]
+
+[project.urls]
+Documentation = "https://github.com/eunchuldev/tinyfan#readme"
+Issues = "https://github.com/eunchuldev/tinyfan/issues"
+Source = "https://github.com/eunchuldev/tinyfan"
+
+
+[tool.pytest.ini_options]
+addopts = ["--import-mode=importlib"]
+
+[tool.mypy]
+exclude = ['build']
+
+[[tool.mypy.overrides]]
+module = ["lark.*", "jsonpatch.*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 120
+
+[tool.uv.workspace]
+members = ["exampels/realworld"]

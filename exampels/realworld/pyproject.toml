@@ -1,0 +1,7 @@
+[project]
+name = "code"
+version = "0.0.1"
+description = "vtown"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
