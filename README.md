@@ -52,56 +52,8 @@ tinyfan template main.py | kubectl apply -f -
 
 # Real World Example (still tiny though!)
 
-```python
+Comming soon
 
-from tinyfan import GcsStore, Flow
-import os
-
-# Build time configs:
-# Pod configs are settled on the build time.
-image = os.environ["IMAGE_NAME"]
-
-# Runtime Configs:
-# Other configs are revisited on runetime.
-some_secret = os.environ[""]
-
-# Flow is refer to the Argo Workflow Object.
-# Flow configs are applied to all of child assets
-flow = Flow(
-    name="flow",
-    image=os.environ["IMAGE_NAME"],
-    envSecrets=[""],
-    envConfigMaps=[""],
-    as_default=True,
-)
-image = os.environ['IMAGE_NAME'],
-sa_name = os.environ['SERVICE_ACCOUNT_NAME'],
-gcs_store = GcsStore(),
-naive_store = NaiveStore()
-
-flow = Flow(
-    store=naive_store,
-)
-# authorized by workload-identity-federation
-
-@asset(
-    schedule = "*/10 * * * *",
-    image = "python3:alpine",
-    store = NaiveStore(),
-)
-def target() -> str:
-    return "world"
-
-
-@asset(
-    schedule = "*/10 * * * *",
-    image = "python3:alpine",
-    store = GcsStore(),
-)
-def target() -> str:
-    return "world"
-
-```
 
 
 # License

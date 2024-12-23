@@ -23,7 +23,7 @@ def test_embed_directory():
     print(snippet)
     with redirect_stdout(f):
         exec(snippet)
-        import directory # type: ignore # noqa
+        import directory  # type: ignore # noqa
     assert "hi\n" == f.getvalue()
 
 

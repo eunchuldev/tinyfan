@@ -21,4 +21,3 @@ class FlowRunData(TypedDict, Generic[UMeta, StoreIdx], total=False):
     # generated data
     store_entry_idx: StoreIdx | None
     # data_interval_start: datetime
-

@@ -195,14 +195,16 @@ class AssetTree:
                             "name": node.asset.name,
                             "synchronization": {"mutexes": [{"name": f"{self.flow.name}-{node.asset.name}"}]},
                             **(
-                                {} if node.asset.image == self.flow.image else {
+                                {}
+                                if node.asset.image == self.flow.image
+                                else {
                                     "script": {
                                         "name": node.asset.name,
                                         "image": node.asset.image or flow_image,
                                         "command": ["python"],
                                         "source": source,
                                         # "command": ["python"]
-                                    } 
+                                    }
                                 }
                             ),
                             "inputs": {
