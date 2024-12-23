@@ -23,6 +23,8 @@ jobs:
         run: uv sync --all-extras --dev
       - name: Run tests
         run: uv run pytest tests
+      - name: Build Package
+        run: uv build
       - name: Publish Project
         run: uv publish
         env:
