@@ -26,6 +26,6 @@ jobs:
       - name: Publish Project
         run: uv publish
         env:
-          UV_PUBLISH_PASSWORD: ${{ UV_PUBLISH_PASSWORD }}
+          UV_PUBLISH_PASSWORD: ${{ secrets.UV_PUBLISH_PASSWORD }}
           UV_PUBLISH_USERNAME: __token__
 
