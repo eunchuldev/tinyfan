@@ -57,6 +57,9 @@ Documentation = "https://github.com/eunchuldev/tinyfan#readme"
 Issues = "https://github.com/eunchuldev/tinyfan/issues"
 Source = "https://github.com/eunchuldev/tinyfan"
 
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
 addopts = ["--import-mode=importlib"]
