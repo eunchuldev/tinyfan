@@ -5,7 +5,7 @@ from ..flowrundata import FlowRunData, StoreIdx, UMeta
 T = TypeVar("T")
 
 
-class StoreBase(Generic[T, StoreIdx]):
+class StoreBase(Generic[T, UMeta, StoreIdx]):
     @staticmethod
     @abstractmethod
     def id() -> str:
@@ -15,7 +15,7 @@ class StoreBase(Generic[T, StoreIdx]):
     def store(
         self,
         value: T,
-        rundata: FlowRunData,
+        rundata: FlowRunData[UMeta, StoreIdx],
     ) -> StoreIdx:
         """should return store index, which is used when retrieve back"""
         pass

@@ -1,49 +1,68 @@
-"""
-from .base import StoreBase, PredefinedParams, Asset
+'''
+from .base import StoreBase, FlowRunData
+from typing import TypedDict, TypeVar, NotRequired
 import pickle
-from typing import TypedDict, Literal
-from google.cloud import bigquery
-from pandas import DataFrame
+import zlib
+import base64
+try:
+    import google.cloud.bigquery as bq
+    import pandas as pd
+except ImportError:
+    raise ImportError(
+        "BigQuery extra not installed. Please install with `pip install tinyfan[bigquery]`"
+    )
 
-DataType = Literal["Pandas.DataFrame", "object"]
+class BigqueryStoreMetadata(TypedDict):
+    table_name: NotRequired[str]
+    partition_col: str
 
-T = DataFrame
-Idx = TypedDict("Idx", {
-    "project_id": str,
-    "dataset_id": str,
-    "table_id": str,
-})
-Meta = TypedDict("Meta", {
-    "bq_table_id": str,
-})
+UMeta = TypeVar("UMeta", bound=BigqueryStoreMetadata)
 
-class BigqueryStore(StoreBase[Idx, Meta, T]):
-    project_id: str
-    dataset_id: str|None
+class BigqueryStore(StoreBase[pd.DataFrame, UMeta, None]):
+    """
+    Usage:
 
+    .. code-block:: python
+        from tinyflow import asset
+        from tinyflow.store.bigquery import BigqueryStore
+
+        bq_store = BigqueryStore()
+
+        @asset(
+            store = bq_store,
+            metadata = {
+                "table_name": "my_table",
+                "partition_col": "date",
+            }
+        )
+        def my_asset():
+            return ""
+
+
+    """
     @staticmethod
     def id() -> str:
         return "tinyfan.bigquery"
 
-    def __init__(self, project_id:str, dataset_id:str|None = None):
-        self.project_id = project_id
-        self.dataset_id = dataset_id
+    client: bq.Client
 
-    def store(self, data: T, asset: Asset, params: PredefinedParams) -> Idx:
-        client = bigquery.Client()
-        ts = params.get('ts')
-        table_id = asset.name
-        if asset.user_metadata and 'table_id' in asset.user_metadata:
-            table_id = asset.user_metadata['table_id']
-        if '.' not in table_id:
-            if self.dataset_id is None:
-                raise ValueError(f"`{table_id}` is not valid. set the id as `<dataset-id>.<table-id>`, or provide `dataset_id` at store level.")
-            table_id = self.dataset_id + '.' + table_id
-        if isinstance(data, DataFrame):
-            return pandas_gbq.to_gbq(data, table_id, project_id=self.project_id)
-        else:
-            raise ValueError(f"Unsupported data type `{type(data)}` for store `{self.id()}`", )
+    def __init__(self, *args, **kwargs):
+        self.client = bq.Client(*args, **kwargs)
 
-    def retrieve(self, index: Idx, _: dict | None = None) -> T:
-        return pandas_gbq.from_gbq(index['table_id'], project_id=self.project_id)
-"""
+    def store(
+        self,
+        value: object,
+        rundata: FlowRunData[UMeta, None],
+    ) -> None:
+        metadata = rundata.get('metadata')
+        return None
+
+    def retrieve(
+        self,
+        index: None,
+        source_rundata: FlowRunData[UMeta, None],
+        target_rundata: FlowRunData,
+    ) -> object:
+        del source_rundata, target_rundata
+        return pickle.loads(decode(index))
+'''

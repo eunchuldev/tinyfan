@@ -4,40 +4,48 @@ from .stores.naive import NaiveStore
 from .flowrundata import FlowRunData, StoreIdx, UMeta
 from dataclasses import dataclass, field
 from typing import Callable, Any, Generic, TypeVar, Mapping
+from .argo_typing import ScriptTemplate
 
 FLOW_CATALOG = {}
 
 Res = TypeVar("Res", bound=Mapping)
-Ret = TypeVar("Ret", bound=Mapping)
+Ret = TypeVar("Ret")
+
+DEFAULT_IMAGE = "python:alpine"
 
 
 @dataclass
 class Flow(Generic[Res]):
     name: str
-    image: str | None = None
     tz: str = "UTC"
     assets: dict[str, "Asset[Any, Res, Any, Any]"] = field(default_factory=dict)
     resources: Res | None = None
+    container: ScriptTemplate | None = None
     store: StoreBase = field(default_factory=NaiveStore)
 
     def __post_init__(self):
         FLOW_CATALOG[self.name] = self
 
 
-DEFAULT_FLOW: Flow[Any] = Flow("tinyfan", image="python:alpine")
+DEFAULT_FLOW: Flow[Any] = Flow(
+    "tinyfan",
+    container={
+        "image": DEFAULT_IMAGE,
+    },
+)
 
 
 @dataclass
 class Asset(Generic[Ret, Res, UMeta, StoreIdx]):
     flow: Flow[Res]
     func: Callable[..., Ret]
-    store: StoreBase[Ret, StoreIdx]
-    image: str | None = None
+    store: StoreBase[Ret, UMeta, StoreIdx]
     schedule: str | None = None
     tz: str | None = None
     metadata: UMeta | None = None
     depends: str | None = None
     name: str = field(init=False)
+    container: ScriptTemplate | None = None
 
     def __post_init__(self):
         self.name = self.func.__name__
@@ -75,22 +83,39 @@ class Asset(Generic[Ret, Res, UMeta, StoreIdx]):
         return (ret, rundata)
 
 
+class AssetFunc(Generic[Ret, Res, UMeta, StoreIdx]):
+    func: Callable[..., Ret]
+    asset: Asset[Ret, Res, UMeta, StoreIdx]
+
+    def __init__(self, func: Callable[..., Ret], asset: Asset[Ret, Res, UMeta, StoreIdx]):
+        self.func = func
+        self.asset = asset
+
+    def __call__(self, *args, **kwargs) -> Ret:
+        res = self.func(*args, **kwargs)
+        return res
+
+
 def asset(
-    flow: Flow = DEFAULT_FLOW,
+    flow: Flow[Res] = DEFAULT_FLOW,
     schedule: str | None = None,
     depends: str | None = None,
-    store: StoreBase | None = None,
-):
-    class wrapper(Generic[Ret]):
-        func: Callable[..., Ret]
-        asset: Asset
-
-        def __init__(self, func: Callable[..., Ret]):
-            self.func = func
-            self.asset = Asset(flow, func=func, depends=depends, schedule=schedule, store=store or flow.store)
-
-        def __call__(self, *args, **kwargs) -> Ret:
-            res = self.func(*args, **kwargs)
-            return res
+    store: StoreBase[Ret, UMeta, StoreIdx] | None = None,
+    tz: str | None = None,
+    metadata: UMeta | None = None,
+    container: ScriptTemplate | None = None,
+) -> Callable[..., AssetFunc[Ret, Res, UMeta, StoreIdx]]:
+    def wrapper(func: Callable[..., Ret]) -> AssetFunc[Ret, Res, UMeta, StoreIdx]:
+        asset = Asset[Ret, Res, UMeta, StoreIdx](
+            flow,
+            func=func,
+            depends=depends,
+            schedule=schedule,
+            store=store or flow.store,
+            tz=tz or flow.tz,
+            metadata=metadata,
+            container=container,
+        )
+        return AssetFunc(func, asset)
 
     return wrapper

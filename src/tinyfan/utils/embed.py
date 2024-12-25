@@ -81,9 +81,9 @@ def embed_directory(
 ) -> str:
     zip_bytes, base_name = zip_directory(dir_path, includes, excludes, minify)
     encoded = base64.b64encode(zip_bytes).decode("utf-8")
-    snippet = f"""
-import sys, base64, tempfile
+    snippet = f"""import sys, base64, tempfile
 zip_data = base64.b64decode('{encoded}')
+
 with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp_file:
     tmp_file.write(zip_data)
     sys.path.append(tmp_file.name)

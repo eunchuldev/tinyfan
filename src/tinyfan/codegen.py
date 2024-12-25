@@ -1,23 +1,26 @@
-from tinyfan.flow import Flow, Asset, FLOW_CATALOG
+from tinyfan.flow import Flow, Asset, FLOW_CATALOG, DEFAULT_IMAGE
 import importlib.util
 from typing import Self
+from .utils.yaml import dump as yaml_dump, dump_all as yaml_dump_all
+from .utils.exjson import DATETIME_ANNOTATION
 import inspect
 import sys
 import re
 import json
-import yaml
 import os
 import pkgutil
+import datetime
+import croniter
+from .argo_typing import ScriptTemplate
 from .utils.embed import embed
+from .utils.merge import deepmerge
 
 VALID_CRON_REGEXP = r"^(?:(?:(?:(?:\d+,)+\d+|(?:\d+(?:\/|-|#)\d+)|\d+L?|\*(?:\/\d+)?|L(?:-\d+)?|\?|[A-Z]{3}(?:-[A-Z]{3})?) ?){5,7})|(@hourly|@daily|@midnight|@weekly|@monthly|@yearly|@annually)$"
 VALID_DEPENDS_REGEXP = r"^(?!.*\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+)(?!.*\.(?!Succeeded|Failed|Errored|Skipped|Omitted|Daemoned)\w+)(?!.*(?:&&|\|\|)\s*(?:&&|\|\|))(?!.*!!)[A-Za-z0-9_&|!().\s]+$"
 
 EXTRACT_DEPENDS_REGEXP = r"(?<!\.)\b([A-Za-z0-9_]+)\b"
 
-RUNDATA_FILE_PATH = "/tmp/tinyfan/{flow_name}/{asset_name}/rundata.json"
-
-DEFAULT_IMAGE = "python:alpine"
+RUNDATA_FILE_PATH = "/tmp/tinyfan/rundata.json"
 
 
 def brackets_balanced(code: str) -> bool:
@@ -78,14 +81,25 @@ class AssetNode:
         mod = inspect.getmodule(self.asset.func)
         return mod.__name__ if mod else None
 
-    def rundatatmpl(self):
+    def rundatatmpl(self, schedule: str):
+        cron = croniter.croniter(schedule, datetime.datetime.now())
+        t1 = cron.get_next(datetime.datetime)
+        t2 = cron.get_next(datetime.datetime)
+        duration_sec = (t2 - t1).total_seconds()
         return re.sub(
             r'"(\{\{tasks\.[^.]+\.outputs\.parameters\.rundata\}\})"',
             r"\1",
             json.dumps(
                 {
-                    "ds": "{{=sprig.date(workflow.scheduledTime)}}",
+                    "ds": "{{=sprig.date('2006-01-02', workflow.scheduledTime)}}",
                     "ts": "{{workflow.scheduledTime}}",
+                    "data_interval_start": {
+                        DATETIME_ANNOTATION: "{{workflow.scheduledTime}}",
+                    },
+                    "data_interval_end": {
+                        DATETIME_ANNOTATION: "{{=sprig.dateModify('%ss', sprig.toDate('2006-01-02T15:04:05Z07:00', workflow.scheduledTime))}}"
+                        % duration_sec,
+                    },
                     "parents": {
                         p.asset.name: "{{tasks.%s.outputs.parameters.rundata}}" % p.asset.name for p in self.parents
                     },
@@ -121,19 +135,21 @@ class AssetTree:
             if node.asset.depends is not None:
                 depends_ids = set(re.findall(EXTRACT_DEPENDS_REGEXP, node.asset.depends))
                 node.parents = [self.nodes[n] for n in depends_ids.union(params_ids)]
-                node.asset.depends = f"({node.asset.depends}) && {' && '.join(params_ids - depends_ids)}"
+                node.asset.depends = f"({node.asset.depends}) && {' && '.join(params_ids - depends_ids)}".replace(
+                    "_", "-"
+                )
                 for p in node.parents:
                     p.children.append(node)
             else:
                 node.parents = [self.nodes[n] for n in params_ids]
                 for p in node.parents:
                     p.children.append(node)
-                node.asset.depends = " && ".join(params_ids)
+                node.asset.depends = " && ".join(params_ids).replace("_", "-")
 
     def compile(
         self,
         embedded: bool = True,
-        image: str = DEFAULT_IMAGE,
+        container: ScriptTemplate = {},
     ) -> str:
         if len(self.nodes) == 0:
             return ""
@@ -152,11 +168,10 @@ class AssetTree:
                 "asset = {{inputs.parameters.asset_name}}.asset\n"
             )
         source += (
-            "_, rundata = asset.run({{inputs.parameters.rundata}})\n"
             "import os\n"
-            "from tinyfan.utils.exjson import dumps\n"
-            f"path = '{RUNDATA_FILE_PATH}'"
-            ".format(flow_name=asset.flow.name, asset_name=asset.name)\n"
+            "from tinyfan.utils.exjson import dumps, loads\n"
+            "_, rundata = asset.run(loads('''{{inputs.parameters.rundata}}'''))\n"
+            f"path = '{RUNDATA_FILE_PATH}'\n"
             "os.makedirs(os.path.dirname(path), exist_ok=True)\n"
             "with open(path, 'w') as f:\n"
             "    f.write(dumps(rundata))\n"
@@ -172,75 +187,7 @@ class AssetTree:
             for o in node.relatives():
                 relatives_by_schedules[schedule].add(o)
 
-        flow_image = self.flow.image or image
-
         manifests = [
-            {
-                "apiVersion": "argoproj.io/v1alpha1",
-                "kind": "WorkflowTemplate",
-                "metadata": {
-                    "name": self.flow.name,
-                },
-                "spec": {
-                    "templateDefaults": {
-                        "script": {
-                            "name": self.flow.name,
-                            "image": flow_image,
-                            "command": ["python"],
-                            "source": source,
-                        },
-                    },
-                    "templates": [
-                        {
-                            "name": node.asset.name,
-                            "synchronization": {"mutexes": [{"name": f"{self.flow.name}-{node.asset.name}"}]},
-                            **(
-                                {}
-                                if node.asset.image == self.flow.image
-                                else {
-                                    "script": {
-                                        "name": node.asset.name,
-                                        "image": node.asset.image or flow_image,
-                                        "command": ["python"],
-                                        "source": source,
-                                        # "command": ["python"]
-                                    }
-                                }
-                            ),
-                            "inputs": {
-                                "parameters": [
-                                    {
-                                        "name": "rundata",
-                                        "value": "{{= nil }}",
-                                    },
-                                    {
-                                        "name": "asset_name",
-                                        "value": "{{= nil }}",
-                                    },
-                                    {
-                                        "name": "module_name",
-                                        "value": "{{= nil }}",
-                                    },
-                                ]
-                            },
-                            "outputs": {
-                                "parameters": [
-                                    {
-                                        "name": "rundata",
-                                        "valueFrom": {
-                                            "path": RUNDATA_FILE_PATH.format(
-                                                flow_name=self.flow.name, asset_name=node.asset.name
-                                            )
-                                        },
-                                    }
-                                ],
-                            },
-                        }
-                        for node in self.nodes.values()
-                    ],
-                },
-            }
-        ] + [
             {
                 "apiVersion": "argoproj.io/v1alpha1",
                 "kind": "CronWorkflow",
@@ -253,23 +200,96 @@ class AssetTree:
                     "timezone": tz,
                     "workflowSpec": {
                         "entrypoint": "flow",
+                        "podSpecPatch": yaml_dump(
+                            {
+                                "containers": [
+                                    deepmerge(
+                                        {
+                                            "name": "main",
+                                            "env": [
+                                                {
+                                                    "name": "TINYFAN_SOURCE",
+                                                    "value": source,
+                                                }
+                                            ],
+                                        },
+                                        container or {},
+                                        self.flow.container or {},
+                                    )
+                                ]
+                            }
+                        ),
                         "templates": [
+                            {
+                                "name": node.asset.name.replace("_", "-"),
+                                "script": deepmerge(
+                                    {
+                                        "image": DEFAULT_IMAGE,
+                                        "command": ["python"],
+                                        "source": """import os;exec(os.environ['TINYFAN_SOURCE'])""",
+                                    },
+                                    container or {},
+                                    self.flow.container or {},
+                                    node.asset.container or {},
+                                ),
+                                "podSpecPatch": yaml_dump(
+                                    {
+                                        "containers": [
+                                            deepmerge(
+                                                {
+                                                    "name": "main",
+                                                },
+                                                node.asset.container or {},
+                                            )
+                                        ]
+                                    }
+                                ),
+                                "synchronization": {"mutexes": [{"name": f"{self.flow.name}-{node.asset.name}"}]},
+                                "inputs": {
+                                    "parameters": [
+                                        {
+                                            "name": "rundata",
+                                            "value": "{{= nil }}",
+                                        },
+                                        {
+                                            "name": "asset_name",
+                                            "value": "{{= nil }}",
+                                        },
+                                        {
+                                            "name": "module_name",
+                                            "value": "{{= nil }}",
+                                        },
+                                    ]
+                                },
+                                "outputs": {
+                                    "parameters": [
+                                        {
+                                            "name": "rundata",
+                                            "valueFrom": {
+                                                "path": RUNDATA_FILE_PATH,
+                                            },
+                                        }
+                                    ],
+                                },
+                            }
+                            for node in relatives
+                        ]
+                        + [
                             {
                                 "name": "flow",
                                 "dag": {
                                     "tasks": [
                                         {
-                                            "name": node.asset.name,
-                                            "depends": node.asset.depends,
-                                            "templateRef": {
-                                                "name": self.flow.name,
-                                                "template": node.asset.name,
-                                            },
+                                            "name": node.asset.name.replace("_", "-"),
+                                            "depends": node.asset.depends.replace("_", "-")
+                                            if node.asset.depends is not None
+                                            else None,
+                                            "template": node.asset.name.replace("_", "-"),
                                             "arguments": {
                                                 "parameters": [
                                                     {
                                                         "name": "rundata",
-                                                        "value": node.rundatatmpl(),
+                                                        "value": node.rundatatmpl(schedule),
                                                     },
                                                     {
                                                         "name": "asset_name",
@@ -285,22 +305,22 @@ class AssetTree:
                                         for node in relatives
                                     ]
                                 },
-                            }
+                            },
                         ],
                     },
                 },
             }
             for (tz, schedule), relatives in relatives_by_schedules.items()
         ]
-        return yaml.dump_all(manifests)
+        return yaml_dump_all(manifests)
 
 
 def codegen(
     location: str | None = None,
     embedded: bool = False,
-    image: str = DEFAULT_IMAGE,
+    container: ScriptTemplate = {},
 ) -> str:
     """Generate argocd workflow resource as yaml from tinyfan definitions"""
     if location:
         import_all_submodules(location)
-    return "\n---\n".join(AssetTree(flow).compile(embedded, image) for flow in FLOW_CATALOG.values())
+    return "\n---\n".join(AssetTree(flow).compile(embedded, container) for flow in FLOW_CATALOG.values())

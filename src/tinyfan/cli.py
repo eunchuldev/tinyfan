@@ -1,16 +1,19 @@
 import typer
 
-from .codegen import codegen, DEFAULT_IMAGE
+from .codegen import codegen
 
 
-def tinyfan(location: str, embedded: bool = False, image: str = DEFAULT_IMAGE):
+def tinyfan(
+    location: str,
+    embedded: bool = False,
+):
     """
     Generate argocd workflow resource as yaml from tinyfan definitions
     """
     if location.endswith(".py"):
-        print(codegen(location=location, embedded=True, image=image))
+        print(codegen(location=location, embedded=True))
     else:
-        print(codegen(location=location, embedded=embedded, image=image))
+        print(codegen(location=location, embedded=embedded))
 
 
 def main():

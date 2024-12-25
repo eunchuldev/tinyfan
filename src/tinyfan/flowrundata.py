@@ -1,9 +1,9 @@
 from typing import TypedDict
-from typing import Generic, TypeVar
-from .utils.exjson import SerializableDict
+from typing import Generic, TypeVar, Mapping
+from datetime import datetime
 
-UMeta = TypeVar("UMeta", bound=SerializableDict)
-StoreIdx = TypeVar("StoreIdx", bound=SerializableDict)
+UMeta = TypeVar("UMeta", bound=Mapping | None)
+StoreIdx = TypeVar("StoreIdx", bound=Mapping | str | int | None)
 
 
 class FlowRunData(TypedDict, Generic[UMeta, StoreIdx], total=False):
@@ -16,6 +16,8 @@ class FlowRunData(TypedDict, Generic[UMeta, StoreIdx], total=False):
     # runtime data
     ds: str
     ts: str
+    data_interval_start: datetime
+    data_interval_end: datetime
     parents: dict[str, "FlowRunData"] | None
 
     # generated data

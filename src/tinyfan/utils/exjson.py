@@ -7,18 +7,21 @@ SerializableDict: TypeAlias = (
     Mapping[str, "SerializableDict"] | Sequence["SerializableDict"] | str | int | float | bool | datetime | None
 )
 
+DATETIME_ANNOTATION = "__tinyfan_datetime__"
+
 
 def default(obj):
     if isinstance(obj, datetime):
-        return obj.isoformat()
+        return {DATETIME_ANNOTATION: obj.isoformat()}
     else:
         return obj
 
 
 def object_hook(obj):
-    try:
-        return datetime.fromisoformat(obj)
-    except ValueError:
+    dt = obj.get(DATETIME_ANNOTATION)
+    if dt is not None:
+        return datetime.fromisoformat(dt)
+    else:
         return obj
 
 

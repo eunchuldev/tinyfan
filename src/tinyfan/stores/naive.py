@@ -2,6 +2,7 @@ from .base import StoreBase, FlowRunData
 import pickle
 import zlib
 import base64
+from typing import Any
 
 
 def encode(s: str | bytes) -> str:
@@ -13,7 +14,7 @@ def decode(s: str) -> bytes:
     return zlib.decompress(base64.b64decode(s))
 
 
-class NaiveStore(StoreBase[object, str]):
+class NaiveStore(StoreBase[object, Any, str]):
     @staticmethod
     def id() -> str:
         return "tinyfan.naivestore"
