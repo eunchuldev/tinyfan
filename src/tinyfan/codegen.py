@@ -15,6 +15,7 @@ from .argo_typing import ScriptTemplate
 from .utils.embed import embed
 from .utils.merge import deepmerge
 from .config import CLI_CONFIG_STATE, Config, ConfigValue, ConfigMapKeyRef, ConfigMapRef, SecretKeyRef, SecretRef
+from .flowrundata import FlowRunData
 
 VALID_CRON_REGEXP = r"^(?:(?:(?:(?:\d+,)+\d+|(?:\d+(?:\/|-|#)\d+)|\d+L?|\*(?:\/\d+)?|L(?:-\d+)?|\?|[A-Z]{3}(?:-[A-Z]{3})?) ?){5,7})|(@hourly|@daily|@midnight|@weekly|@monthly|@yearly|@annually)$"
 VALID_DEPENDS_REGEXP = r"^(?!.*\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+)(?!.*\.(?!Succeeded|Failed|Errored|Skipped|Omitted|Daemoned)\w+)(?!.*(?:&&|\|\|)\s*(?:&&|\|\|))(?!.*!!)[A-Za-z0-9_&|!().\s]+$"
@@ -136,6 +137,7 @@ class AssetTree:
                 set(self.flow.assets.keys())
                 | set((self.flow.resources or {}).keys())
                 | set((self.flow.configs or {}).keys())
+                | set(inspect.get_annotations(FlowRunData).keys())
             )
             unknown_names = [n for n in func_param_names if n not in known_names]
             if len(unknown_names) > 0:

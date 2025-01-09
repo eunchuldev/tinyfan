@@ -13,7 +13,7 @@ def sample_flow() -> Generator:
     flow: Flow = Flow("test")
 
     @asset(flow=flow, schedule="@daily")
-    def asset1():  # type: ignore
+    def asset1(ds: str):  # type: ignore
         print("asset1 is executed")
         return "hello"
 
