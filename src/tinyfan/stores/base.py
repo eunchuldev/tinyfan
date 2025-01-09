@@ -1,11 +1,12 @@
-from abc import abstractmethod
+from abc import abstractmethod, ABC
 from typing import Generic, TypeVar
+from ..resources.base import ResourceBase
 from ..flowrundata import FlowRunData, StoreIdx, UMeta
 
 T = TypeVar("T")
 
 
-class StoreBase(Generic[T, UMeta, StoreIdx]):
+class StoreBase(ABC, ResourceBase, Generic[T, UMeta, StoreIdx]):
     @staticmethod
     @abstractmethod
     def id() -> str:

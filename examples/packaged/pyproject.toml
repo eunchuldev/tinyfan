@@ -1,0 +1,13 @@
+[project]
+name = "tinyfan_examples_packaged"
+version = "0.0.1"
+description = "tinyfan pacakged example"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["tinyfan"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+

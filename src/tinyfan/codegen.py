@@ -1,4 +1,4 @@
-from tinyfan.flow import Flow, Asset, FLOW_CATALOG, DEFAULT_IMAGE
+from tinyfan.flow import Flow, Asset, FLOW_REGISTER, DEFAULT_IMAGE
 import importlib.util
 from typing import Self
 from .utils.yaml import dump as yaml_dump, dump_all as yaml_dump_all
@@ -14,6 +14,7 @@ import croniter
 from .argo_typing import ScriptTemplate
 from .utils.embed import embed
 from .utils.merge import deepmerge
+from .config import CLI_CONFIG_STATE, Config, ConfigValue, ConfigMapKeyRef, ConfigMapRef, SecretKeyRef, SecretRef
 
 VALID_CRON_REGEXP = r"^(?:(?:(?:(?:\d+,)+\d+|(?:\d+(?:\/|-|#)\d+)|\d+L?|\*(?:\/\d+)?|L(?:-\d+)?|\?|[A-Z]{3}(?:-[A-Z]{3})?) ?){5,7})|(@hourly|@daily|@midnight|@weekly|@monthly|@yearly|@annually)$"
 VALID_DEPENDS_REGEXP = r"^(?!.*\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+)(?!.*\.(?!Succeeded|Failed|Errored|Skipped|Omitted|Daemoned)\w+)(?!.*(?:&&|\|\|)\s*(?:&&|\|\|))(?!.*!!)[A-Za-z0-9_&|!().\s]+$"
@@ -66,6 +67,7 @@ def import_all_submodules(location: str):
 
 class AssetNode:
     asset: Asset
+    refs: list[Config | ConfigValue | str | None]
     children: list[Self]
     parents: list[Self]
 
@@ -130,8 +132,18 @@ class AssetTree:
         for node in self.nodes.values():
             sigs = inspect.signature(node.asset.func)
             func_param_names = list(sigs.parameters.keys())
-            params_ids = set(name for name in func_param_names if name in self.flow.assets)
+            known_names = (
+                set(self.flow.assets.keys())
+                | set((self.flow.resources or {}).keys())
+                | set((self.flow.configs or {}).keys())
+            )
+            unknown_names = [n for n in func_param_names if n not in known_names]
+            if len(unknown_names) > 0:
+                raise Exception(
+                    f"unknown asset args: {', '.join('`' + n + '`' for n in unknown_names)} from asset `{node.asset.name}`"
+                )
 
+            params_ids = set(name for name in func_param_names if name in self.flow.assets)
             if node.asset.depends is not None:
                 depends_ids = set(re.findall(EXTRACT_DEPENDS_REGEXP, node.asset.depends))
                 node.parents = [self.nodes[n] for n in depends_ids.union(params_ids)]
@@ -146,6 +158,13 @@ class AssetTree:
                     p.children.append(node)
                 node.asset.depends = " && ".join(params_ids).replace("_", "-")
 
+            flow_resources = self.flow.resources or {}
+            flow_refs = self.flow.configs or {}
+            param_resources = [flow_resources[n] for n in func_param_names if n in flow_resources]
+            resource_refs = [ref for res in param_resources for ref in res.get_refs()]
+            param_refs = [flow_refs[n] for n in func_param_names if n in flow_refs]
+            node.refs = list(set(resource_refs + param_refs))
+
     def compile(
         self,
         embedded: bool = True,
@@ -154,8 +173,14 @@ class AssetTree:
         if len(self.nodes) == 0:
             return ""
 
+        source = ""
         if embedded:
-            source = embed("tinyfan", excludes=["codegen.py", "utils/embed.py", "**/__pycache__/*"], minify=False)
+            source += embed("tinyfan", excludes=["codegen.py", "utils/embed.py", "**/__pycache__/*"], minify=False)
+        source += (
+            "from tinyfan.config import CLI_CONFIG_STATE\n"
+            f"CLI_CONFIG_STATE.cli_args = {json.dumps(CLI_CONFIG_STATE.cli_args)}\n"
+        )
+        if embedded:
             root_location = get_root_path(list(self.nodes.values())[0].asset.func)
             source += embed(root_location)
             if not root_location.endswith(".py"):
@@ -227,6 +252,50 @@ class AssetTree:
                                         "image": DEFAULT_IMAGE,
                                         "command": ["python"],
                                         "source": """import os;exec(os.environ['TINYFAN_SOURCE'])""",
+                                        "env": [
+                                            {
+                                                "name": ref._env_name(),
+                                                "valueFrom": {
+                                                    "configMapKeyRef": {
+                                                        "name": ref.name,
+                                                        "key": ref.key,
+                                                    }
+                                                },
+                                            }
+                                            for ref in node.refs
+                                            if isinstance(ref, ConfigMapKeyRef)
+                                        ]
+                                        + [
+                                            {
+                                                "name": ref._env_name(),
+                                                "valueFrom": {
+                                                    "secretKeyRef": {
+                                                        "name": ref.name,
+                                                        "key": ref.key,
+                                                    }
+                                                },
+                                            }
+                                            for ref in node.refs
+                                            if isinstance(ref, SecretKeyRef)
+                                        ],
+                                        "envFrom": [
+                                            {
+                                                "configMapRef": {
+                                                    "name": ref.name,
+                                                }
+                                            }
+                                            for ref in node.refs
+                                            if isinstance(ref, ConfigMapRef)
+                                        ]
+                                        + [
+                                            {
+                                                "secretRef": {
+                                                    "name": ref.name,
+                                                }
+                                            }
+                                            for ref in node.refs
+                                            if isinstance(ref, SecretRef)
+                                        ],
                                     },
                                     container or {},
                                     self.flow.container or {},
@@ -316,11 +385,19 @@ class AssetTree:
 
 
 def codegen(
+    flow: Flow | None = None,
     location: str | None = None,
     embedded: bool = False,
     container: ScriptTemplate = {},
 ) -> str:
     """Generate argocd workflow resource as yaml from tinyfan definitions"""
-    if location:
+    CLI_CONFIG_STATE.codegen = True
+    if flow:
+        result = AssetTree(flow).compile(embedded, container)
+    elif location:
         import_all_submodules(location)
-    return "\n---\n".join(AssetTree(flow).compile(embedded, container) for flow in FLOW_CATALOG.values())
+        result = "\n---\n".join(AssetTree(flow).compile(embedded, container) for flow in FLOW_REGISTER.values())
+    else:
+        result = "\n---\n".join(AssetTree(flow).compile(embedded, container) for flow in FLOW_REGISTER.values())
+    CLI_CONFIG_STATE.codegen = False
+    return result

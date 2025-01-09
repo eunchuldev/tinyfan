@@ -1,24 +1,42 @@
 from tinyfan import Flow, asset
-from tinyfan.codegen import codegen, AssetTree, RUNDATA_FILE_PATH
+from tinyfan.flow import FLOW_REGISTER
+from tinyfan.codegen import codegen, AssetTree
 from jsonschema.exceptions import ValidationError
-from io import StringIO
+from typing import Generator
 import os
-from contextlib import redirect_stdout
-from .helpers import gotmpl
-import yaml
-
-flow: Flow = Flow("test")
+import pytest
 
 
-@asset(flow=flow, schedule="@daily")
-def asset1():
-    print("asset1 is executed")
-    return "hello"
+# type: ignore
+@pytest.fixture()
+def sample_flow() -> Generator:
+    flow: Flow = Flow("test")
+
+    @asset(flow=flow, schedule="@daily")
+    def asset1():  # type: ignore
+        print("asset1 is executed")
+        return "hello"
+
+    @asset(flow=flow)
+    def asset2(asset1: str):  # type: ignore
+        print("asset1 says: " + asset1)
+
+    yield flow
+    FLOW_REGISTER.clear()
 
 
-@asset(flow=flow)
-def asset2(asset1: str):
-    print("asset1 says: " + asset1)
+# type: ignore
+@pytest.fixture()
+def unknown_arg_flow() -> Generator:
+    flow: Flow = Flow("test")
+
+    @asset(flow=flow, schedule="@daily")
+    def asset1(unknown: str):  # type: ignore
+        print("asset1 is executed")
+        return "hello"
+
+    yield flow
+    FLOW_REGISTER.clear()
 
 
 def gotmpl_values(tree: AssetTree, asset_name: str, schedule: str) -> dict:
@@ -43,6 +61,7 @@ def gotmpl_values(tree: AssetTree, asset_name: str, schedule: str) -> dict:
 def assert_code_is_running(code: str):
     # comment out all assertion since templateDefault script override is not working
     return
+    """
     sourcetmpl = next(yaml.load_all(code, yaml.Loader))["spec"]["workflowSpec"]["templates"][0]["script"]["source"]
     tree = AssetTree(flow)
     values = gotmpl_values(tree, "asset1", "@daily")
@@ -62,15 +81,27 @@ def assert_code_is_running(code: str):
     with redirect_stdout(f):
         exec(source)
     assert "asset1 says: hello\n" == f.getvalue()
+    """
 
 
-def test_codegen(validate_crds, assert_manifests):
+def test_codegen_raise_unknown_asset_args(unknown_arg_flow):
+    with pytest.raises(Exception):
+        _ = codegen(flow=unknown_arg_flow)
+
+
+def test_codegen_flow(validate_crds, sample_flow):
+    actual = codegen(flow=sample_flow)
+    validate_crds(actual)
+    assert_code_is_running(actual)
+
+
+def test_codegen_implicit(validate_crds, sample_flow):
     actual = codegen()
     validate_crds(actual)
     assert_code_is_running(actual)
 
 
-def test_embedded_codegen(validate_crds, assert_manifests):
+def test_embedded_codegen(validate_crds, sample_flow):
     actual = codegen(embedded=True)
     validate_crds(actual)
     assert_code_is_running(actual)

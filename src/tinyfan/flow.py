@@ -3,31 +3,33 @@ from .stores.base import StoreBase
 from .stores.naive import NaiveStore
 from .flowrundata import FlowRunData, StoreIdx, UMeta
 from dataclasses import dataclass, field
-from typing import Callable, Any, Generic, TypeVar, Mapping
+from typing import Callable, Any, Generic, TypeVar
+from .resources.base import ResourceBase
 from .argo_typing import ScriptTemplate
+from .config import Config, ConfigValue
 
-FLOW_CATALOG = {}
+FLOW_REGISTER = {}
 
-Res = TypeVar("Res", bound=Mapping)
 Ret = TypeVar("Ret")
 
 DEFAULT_IMAGE = "python:alpine"
 
 
 @dataclass
-class Flow(Generic[Res]):
+class Flow:
     name: str
     tz: str = "UTC"
-    assets: dict[str, "Asset[Any, Res, Any, Any]"] = field(default_factory=dict)
-    resources: Res | None = None
+    assets: dict[str, "Asset[Any, Any, Any]"] = field(default_factory=dict)
+    resources: dict[str, ResourceBase] | None = None
     container: ScriptTemplate | None = None
     store: StoreBase = field(default_factory=NaiveStore)
+    configs: dict[str, Config | ConfigValue | str | None] = field(default_factory=dict)
 
     def __post_init__(self):
-        FLOW_CATALOG[self.name] = self
+        FLOW_REGISTER[self.name] = self
 
 
-DEFAULT_FLOW: Flow[Any] = Flow(
+DEFAULT_FLOW: Flow = Flow(
     "tinyfan",
     container={
         "image": DEFAULT_IMAGE,
@@ -36,8 +38,8 @@ DEFAULT_FLOW: Flow[Any] = Flow(
 
 
 @dataclass
-class Asset(Generic[Ret, Res, UMeta, StoreIdx]):
-    flow: Flow[Res]
+class Asset(Generic[Ret, UMeta, StoreIdx]):
+    flow: Flow
     func: Callable[..., Ret]
     store: StoreBase[Ret, UMeta, StoreIdx]
     schedule: str | None = None
@@ -62,11 +64,15 @@ class Asset(Generic[Ret, Res, UMeta, StoreIdx]):
         mod = inspect.getmodule(self.func)
         if mod and mod.__name__:
             rundata["module_name"] = mod.__name__
-        params = {k: v for k, v in rundata.items() if k in func_param_names}
+        params: dict[str, object] = {k: v for k, v in rundata.items() if k in func_param_names}
         if self.flow.resources:
-            for k, v in self.flow.resources:
+            for k, v in self.flow.resources.items():
                 if k in func_param_names:
                     params[k] = v
+        if self.flow.configs:
+            for k2, v2 in self.flow.configs.items():
+                if k2 in func_param_names:
+                    params[k2] = v2
 
         parent_flowrundatas: dict[str, FlowRunData] = rundata.get("parents") or {}
         for name, prundata in parent_flowrundatas.items():
@@ -83,11 +89,11 @@ class Asset(Generic[Ret, Res, UMeta, StoreIdx]):
         return (ret, rundata)
 
 
-class AssetFunc(Generic[Ret, Res, UMeta, StoreIdx]):
+class AssetFunc(Generic[Ret, UMeta, StoreIdx]):
     func: Callable[..., Ret]
-    asset: Asset[Ret, Res, UMeta, StoreIdx]
+    asset: Asset[Ret, UMeta, StoreIdx]
 
-    def __init__(self, func: Callable[..., Ret], asset: Asset[Ret, Res, UMeta, StoreIdx]):
+    def __init__(self, func: Callable[..., Ret], asset: Asset[Ret, UMeta, StoreIdx]):
         self.func = func
         self.asset = asset
 
@@ -97,16 +103,16 @@ class AssetFunc(Generic[Ret, Res, UMeta, StoreIdx]):
 
 
 def asset(
-    flow: Flow[Res] = DEFAULT_FLOW,
+    flow: Flow = DEFAULT_FLOW,
     schedule: str | None = None,
     depends: str | None = None,
     store: StoreBase[Ret, UMeta, StoreIdx] | None = None,
     tz: str | None = None,
     metadata: UMeta | None = None,
     container: ScriptTemplate | None = None,
-) -> Callable[..., AssetFunc[Ret, Res, UMeta, StoreIdx]]:
-    def wrapper(func: Callable[..., Ret]) -> AssetFunc[Ret, Res, UMeta, StoreIdx]:
-        asset = Asset[Ret, Res, UMeta, StoreIdx](
+) -> Callable[..., AssetFunc[Ret, UMeta, StoreIdx]]:
+    def wrapper(func: Callable[..., Ret]) -> AssetFunc[Ret, UMeta, StoreIdx]:
+        asset = Asset[Ret, UMeta, StoreIdx](
             flow,
             func=func,
             depends=depends,
