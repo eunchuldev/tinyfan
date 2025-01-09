@@ -12,19 +12,27 @@ class CliConfigState:
 CLI_CONFIG_STATE = CliConfigState()
 
 
-def cli_arg(name: str, from_env: str | None = None):
+def cli_arg(name: str, from_env: str | None = None, default: str | None = None) -> str:
     if CLI_CONFIG_STATE.codegen:
         if name not in CLI_CONFIG_STATE.cli_args:
             if from_env is not None:
-                val = os.environ.get(from_env)
+                val = os.environ.get(from_env, default)
                 if val is None:
                     raise Exception(f"neither of cli arg `{name}` nor env var `{from_env}` not setted.")
                 return val
-            raise Exception(f"cli arg `{name}` is not setted.")
+            elif default is not None:
+                return default
+            else:
+                raise Exception(f"cli arg `{name}` is not setted.")
         else:
             return CLI_CONFIG_STATE.cli_args[name]
     else:
-        return CLI_CONFIG_STATE.cli_args.get(name)
+        if default is not None:
+            return CLI_CONFIG_STATE.cli_args.get(name, default)
+        elif name not in CLI_CONFIG_STATE.cli_args:
+            raise Exception(f"cli arg `{name}` is not setted.")
+        else:
+            return CLI_CONFIG_STATE.cli_args[name]
 
 
 class ConfigValue(ABC):
