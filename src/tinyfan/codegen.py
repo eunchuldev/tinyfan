@@ -13,7 +13,7 @@ import datetime
 import croniter
 from .argo_typing import ScriptTemplate
 from .utils.embed import embed
-from .utils.merge import deepmerge
+from .utils.merge import deepmerge, dropnone
 from .config import CLI_CONFIG_STATE, Config, ConfigValue, ConfigMapKeyRef, ConfigMapRef, SecretKeyRef, SecretRef
 from .flowrundata import FlowRunData
 
@@ -171,6 +171,7 @@ class AssetTree:
         self,
         embedded: bool = True,
         container: ScriptTemplate = {},
+        serviceAccountName: str | None = None,
     ) -> str:
         if len(self.nodes) == 0:
             return ""
@@ -227,6 +228,7 @@ class AssetTree:
                     "timezone": tz,
                     "workflowSpec": {
                         "entrypoint": "flow",
+                        **dropnone({"serviceAccountName": serviceAccountName or self.flow.serviceAccountName}),
                         "podSpecPatch": yaml_dump(
                             {
                                 "containers": [
@@ -249,6 +251,7 @@ class AssetTree:
                         "templates": [
                             {
                                 "name": node.asset.name.replace("_", "-"),
+                                **dropnone({"serviceAccountName": node.asset.serviceAccountName}),
                                 "script": deepmerge(
                                     {
                                         "image": DEFAULT_IMAGE,
@@ -391,15 +394,20 @@ def codegen(
     location: str | None = None,
     embedded: bool = False,
     container: ScriptTemplate = {},
+    serviceAccountName: str | None = None,
 ) -> str:
     """Generate argocd workflow resource as yaml from tinyfan definitions"""
     CLI_CONFIG_STATE.codegen = True
     if flow:
-        result = AssetTree(flow).compile(embedded, container)
+        result = AssetTree(flow).compile(embedded, container, serviceAccountName)
     elif location:
         import_all_submodules(location)
-        result = "\n---\n".join(AssetTree(flow).compile(embedded, container) for flow in FLOW_REGISTER.values())
+        result = "\n---\n".join(
+            AssetTree(flow).compile(embedded, container, serviceAccountName) for flow in FLOW_REGISTER.values()
+        )
     else:
-        result = "\n---\n".join(AssetTree(flow).compile(embedded, container) for flow in FLOW_REGISTER.values())
+        result = "\n---\n".join(
+            AssetTree(flow).compile(embedded, container, serviceAccountName) for flow in FLOW_REGISTER.values()
+        )
     CLI_CONFIG_STATE.codegen = False
     return result

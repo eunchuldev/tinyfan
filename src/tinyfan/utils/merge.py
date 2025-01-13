@@ -15,3 +15,13 @@ def deepmerge(dict1: T, dict2: T, *args: T) -> T:
     for arg in args:
         deepmerge(dict1, arg)
     return dict1
+
+
+def dropnone(d: dict) -> dict:
+    dropping = []
+    for k in d:
+        if d[k] is None:
+            dropping.append(k)
+    for k in dropping:
+        del d[k]
+    return d

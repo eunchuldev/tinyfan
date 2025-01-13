@@ -22,6 +22,7 @@ class Flow:
     assets: dict[str, "Asset[Any, Any, Any]"] = field(default_factory=dict)
     resources: dict[str, ResourceBase] | None = None
     container: ScriptTemplate | None = None
+    serviceAccountName: str | None = None
     store: StoreBase = field(default_factory=NaiveStore)
     configs: dict[str, Config | ConfigValue | str | None] = field(default_factory=dict)
 
@@ -48,6 +49,7 @@ class Asset(Generic[Ret, UMeta, StoreIdx]):
     depends: str | None = None
     name: str = field(init=False)
     container: ScriptTemplate | None = None
+    serviceAccountName: str | None = None
 
     def __post_init__(self):
         self.name = self.func.__name__
@@ -110,6 +112,7 @@ def asset(
     tz: str | None = None,
     metadata: UMeta | None = None,
     container: ScriptTemplate | None = None,
+    serviceAccountName: str | None = None,
 ) -> Callable[..., AssetFunc[Ret, UMeta, StoreIdx]]:
     def wrapper(func: Callable[..., Ret]) -> AssetFunc[Ret, UMeta, StoreIdx]:
         asset = Asset[Ret, UMeta, StoreIdx](
@@ -121,6 +124,7 @@ def asset(
             tz=tz or flow.tz,
             metadata=metadata,
             container=container,
+            serviceAccountName=serviceAccountName,
         )
         return AssetFunc(func, asset)
 
