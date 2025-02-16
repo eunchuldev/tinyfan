@@ -1,18 +1,11 @@
 [project]
 name = "tinyfan"
-version = "0.1.3"
+version = "0.2.0"
 description = 'Tiny Argo Workflows python devkit'
 readme = "README.md"
 requires-python = ">=3.12"
-keywords = [
-  "argo-workflow",
-  "tinyfan",
-  "workflow",
-  "pipeline",
-]
-authors = [
-  { name = "eunchuldev", email = "eunchulsong@gmail.com" },
-]
+keywords = ["argo-workflow", "tinyfan", "workflow", "pipeline"]
+authors = [{ name = "eunchuldev", email = "eunchulsong@gmail.com" }]
 classifiers = [
   "Operating System :: OS Independent",
   "License :: OSI Approved :: MIT License",
@@ -20,32 +13,16 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
 ]
-dependencies = [
-    "croniter>=3.0.3",
-    "pyyaml>=6.0.2",
-    "typer-slim>=0.15.1",
-]
+dependencies = ["croniter>=3.0.3", "pyyaml>=6.0.2", "typer-slim>=0.15.1"]
 
 [project.scripts]
 tinyfan = "tinyfan.cli:main"
 
 [project.optional-dependencies]
-all = [
-  "tinyfan[gcs]",
-  "tinyfan[bigquery]",
-  "tinyfan[pandas]",
-]
-gcs = [
-  "google-cloud-storage",
-]
-bigquery = [
-  "google-cloud-bigquery[pandas]",
-  "tinyfan[pandas]",
-]
-pandas = [
-  "pandas",
-  "pyarrow",
-]
+all = ["tinyfan[gcs]", "tinyfan[bigquery]", "tinyfan[pandas]"]
+gcs = ["google-cloud-storage"]
+bigquery = ["google-cloud-bigquery[pandas]", "tinyfan[pandas]"]
+pandas = ["pandas", "pyarrow"]
 dev = [
   "pytest >= 8.3.3",
   "jsonpatch>=1",
@@ -54,6 +31,7 @@ dev = [
   "ruff",
   "types-PyYAML",
   "types-jsonschema",
+  "types-croniter",
 ]
 
 [project.urls]

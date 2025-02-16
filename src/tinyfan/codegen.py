@@ -89,19 +89,21 @@ class AssetNode:
         t1 = cron.get_next(datetime.datetime)
         t2 = cron.get_next(datetime.datetime)
         duration_sec = (t2 - t1).total_seconds()
+        data_interval_start_tmpl = (
+            f"sprig.dateModify('-{duration_sec}s', sprig.toDate('2006-01-02T15:04:05Z07:00', workflow.scheduledTime))"
+        )
         return re.sub(
             r'"(\{\{tasks\.[^.]+\.outputs\.parameters\.rundata\}\})"',
             r"\1",
             json.dumps(
                 {
-                    "ds": "{{=sprig.date('2006-01-02', workflow.scheduledTime)}}",
-                    "ts": "{{workflow.scheduledTime}}",
+                    "ds": "{{=sprig.date('2006-01-02', %s)}}" % data_interval_start_tmpl,
+                    "ts": "{{=%s}}" % data_interval_start_tmpl,
                     "data_interval_start": {
-                        DATETIME_ANNOTATION: "{{workflow.scheduledTime}}",
+                        DATETIME_ANNOTATION: "{{=%s}}" % data_interval_start_tmpl,
                     },
                     "data_interval_end": {
-                        DATETIME_ANNOTATION: "{{=sprig.dateModify('%ss', sprig.toDate('2006-01-02T15:04:05Z07:00', workflow.scheduledTime))}}"
-                        % duration_sec,
+                        DATETIME_ANNOTATION: "{{workflow.scheduledTime}}",
                     },
                     "parents": {
                         p.asset.name: "{{tasks.%s.outputs.parameters.rundata}}" % p.asset.name for p in self.parents
@@ -187,7 +189,7 @@ class AssetTree:
             root_location = get_root_path(list(self.nodes.values())[0].asset.func)
             source += embed(root_location)
             if not root_location.endswith(".py"):
-                source += "from {{inputs.parameters.module_name}}" " import {{inputs.parameters.asset_name}}\n"
+                source += "from {{inputs.parameters.module_name}} import {{inputs.parameters.asset_name}}\n"
             source += "asset = {{inputs.parameters.asset_name}}.asset\n"
         else:
             source = (
@@ -220,8 +222,8 @@ class AssetTree:
                 "apiVersion": "argoproj.io/v1alpha1",
                 "kind": "CronWorkflow",
                 "metadata": {
-                    "name": f"""{self.flow.name}-{ encode_schedule_to_k8sname(tz, schedule) }""",
-                    "generateName": f"""{self.flow.name}-{ encode_schedule_to_k8sname(tz, schedule) }-""",
+                    "name": f"""{self.flow.name}-{encode_schedule_to_k8sname(tz, schedule)}""",
+                    "generateName": f"""{self.flow.name}-{encode_schedule_to_k8sname(tz, schedule)}-""",
                 },
                 "spec": {
                     "schedule": schedule,

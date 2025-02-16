@@ -127,3 +127,14 @@ def test_codegen_directory(validate_crds):
         if e.json_path != "$.spec.templates[0].script" or e.validator != "required":
             raise e
     assert_code_is_running(actual)
+
+
+def test_rundata_data_interval(sample_flow):
+    tree = AssetTree(sample_flow)
+    node = list(tree.nodes.values())[0]
+    # rundatatmpl = node.rundatatmpl("0 * * * * *")
+    daily = node.rundatatmpl("@daily")
+    assert (
+        daily
+        == """{"ds": "{{=sprig.date('2006-01-02', sprig.dateModify('-86400.0s', sprig.toDate('2006-01-02T15:04:05Z07:00', workflow.scheduledTime)))}}", "ts": "{{=sprig.dateModify('-86400.0s', sprig.toDate('2006-01-02T15:04:05Z07:00', workflow.scheduledTime))}}", "data_interval_start": {"__tinyfan_datetime__": "{{=sprig.dateModify('-86400.0s', sprig.toDate('2006-01-02T15:04:05Z07:00', workflow.scheduledTime))}}"}, "data_interval_end": {"__tinyfan_datetime__": "{{workflow.scheduledTime}}"}, "parents": {}, "asset_name": "asset1", "flow_name": "test", "module_name": "tests.test_codegen"}"""
+    )

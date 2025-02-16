@@ -27,5 +27,5 @@ def trace_configs(
     secretkey: SecretKeyRef,
 ):
     print(
-        f'{constant} - {cliarg} - {configmap.get("otherkey")} - {configmapkey.get_value()} - {secret.get("othersecretkey")} - {secretkey.get_value()}'
+        f"{constant} - {cliarg} - {configmap.get('otherkey')} - {configmapkey.get_value()} - {secret.get('othersecretkey')} - {secretkey.get_value()}"
     )
