@@ -1,6 +1,6 @@
 [project]
 name = "tinyfan"
-version = "0.2.1"
+version = "0.2.2"
 description = 'Tiny Argo Workflows python devkit'
 readme = "README.md"
 requires-python = ">=3.12"
@@ -20,8 +20,9 @@ dependencies = ["croniter>=3.0.3", "pyyaml>=6.0.2", "typer-slim>=0.15.1"]
 tinyfan = "tinyfan.cli:main"
 
 [project.optional-dependencies]
-all = ["tinyfan[gcs]", "tinyfan[bigquery]", "tinyfan[pandas]"]
+all = ["tinyfan[gcs]", "tinyfan[bigquery]", "tinyfan[pandas]", "tinyfan[viz]"]
 gcs = ["google-cloud-storage"]
+viz = ["networkx"]
 bigquery = ["google-cloud-bigquery[pandas]", "tinyfan[pandas]"]
 pandas = ["pandas", "pyarrow"]
 dev = [
@@ -33,6 +34,7 @@ dev = [
   "types-PyYAML",
   "types-jsonschema",
   "types-croniter",
+  "tinyfan[all]",
 ]
 
 [project.urls]

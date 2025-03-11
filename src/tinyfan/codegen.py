@@ -169,6 +169,37 @@ class AssetTree:
             param_refs = [flow_refs[n] for n in func_param_names if n in flow_refs]
             node.refs = list(set(resource_refs + param_refs))
 
+    def relatives_by_schedules(self) -> dict[tuple[str, str], set[AssetNode]]:
+        relatives_by_schedules: dict[tuple[str, str], set[AssetNode]] = {}
+        for node in self.nodes.values():
+            if node.asset.schedule is None:
+                continue
+            schedule = (node.asset.tz or self.flow.tz, node.asset.schedule)
+            if schedule not in relatives_by_schedules:
+                relatives_by_schedules[schedule] = set()
+            for o in node.relatives():
+                relatives_by_schedules[schedule].add(o)
+        return relatives_by_schedules
+
+    def dagviz(self) -> str | None:
+        try:
+            import networkx as nx
+        except ImportError:
+            return None
+
+        from .dagviz import dagviz
+
+        relatives_by_schedules = self.relatives_by_schedules()
+        g: nx.DiGraph = nx.DiGraph()
+        # g.add_node(self.flow.name)
+        # g.add_nodes_from([k for k in relatives_by_schedules.keys()])
+        # g.add_nodes_from(self.nodes.keys())
+        for (_, schedule), relatives in relatives_by_schedules.items():
+            g.add_edge(self.flow.name, schedule)
+            g.add_edges_from([(schedule, r.asset.name) for r in relatives])
+            g.add_edges_from([(r.asset.name, d.asset.name) for r in relatives for d in r.parents])
+        return dagviz(g, round_angle=True)
+
     def compile(
         self,
         embedded: bool = True,
@@ -207,15 +238,7 @@ class AssetTree:
             "    f.write(dumps(rundata))\n"
         )
 
-        relatives_by_schedules: dict[tuple[str, str], set[AssetNode]] = {}
-        for node in self.nodes.values():
-            if node.asset.schedule is None:
-                continue
-            schedule = (node.asset.tz or self.flow.tz, node.asset.schedule)
-            if schedule not in relatives_by_schedules:
-                relatives_by_schedules[schedule] = set()
-            for o in node.relatives():
-                relatives_by_schedules[schedule].add(o)
+        relatives_by_schedules = self.relatives_by_schedules()
 
         manifests = [
             {
@@ -388,7 +411,12 @@ class AssetTree:
             }
             for (tz, schedule), relatives in relatives_by_schedules.items()
         ]
-        return yaml_dump_all(manifests)
+        manifest = ""
+        dagviz = self.dagviz()
+        if dagviz:
+            manifest += "# " + dagviz.replace("\n", "\n# ") + "\n\n"
+        manifest += yaml_dump_all(manifests)
+        return manifest
 
 
 def codegen(
