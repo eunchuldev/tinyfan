@@ -15,6 +15,7 @@ def dagviz(g: nx.DiGraph, round_angle: bool = False) -> str:
     assert nx.is_directed_acyclic_graph(g), "Graph contains cycles"
 
     rows: List[Hashable] = []
+    bullets: List[str] = []
     node_to_row: Dict[Hashable, int] = {}
     indents: List[int] = []
 
@@ -27,6 +28,7 @@ def dagviz(g: nx.DiGraph, round_angle: bool = False) -> str:
         for i in range(len(sources)):
             node_to_row[sources[i]] = len(rows)
             rows.append(sources[i])
+            bullets.append(g.nodes[sources[i]].get("bullet", "•"))
             indents.append(indent + i)
         _process_dag(nx.DiGraph(g.subgraph(set(g.nodes).difference(sources))), indent=indent + len(sources))
 
@@ -50,5 +52,5 @@ def dagviz(g: nx.DiGraph, round_angle: bool = False) -> str:
         for k in range(indents[i] * 2 + 1, indents[n] * 2):
             a[n][k] = "─"
 
-    lines: List[str] = [x.tounicode() + "• " + str(i).replace("\n", " ") for x, i in zip(a, rows)]
+    lines: List[str] = [x.tounicode() + f"{b} " + str(i).replace("\n", " ") for x, b, i in zip(a, bullets, rows)]
     return "\n".join(lines)

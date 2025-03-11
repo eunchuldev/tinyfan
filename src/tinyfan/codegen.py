@@ -191,12 +191,12 @@ class AssetTree:
 
         relatives_by_schedules = self.relatives_by_schedules()
         g: nx.DiGraph = nx.DiGraph()
-        # g.add_node(self.flow.name)
-        # g.add_nodes_from([k for k in relatives_by_schedules.keys()])
-        # g.add_nodes_from(self.nodes.keys())
-        for (_, schedule), relatives in relatives_by_schedules.items():
-            g.add_edge(self.flow.name, schedule)
-            g.add_edges_from([(schedule, r.asset.name) for r in relatives])
+        g.add_node(self.flow.name, bullet="■")
+        for (tz, schedule), relatives in relatives_by_schedules.items():
+            schedule_node_name = schedule + f" ({tz})"
+            g.add_node(schedule_node_name, bullet="○")
+            g.add_edge(self.flow.name, schedule_node_name)
+            g.add_edges_from([(schedule_node_name, r.asset.name) for r in relatives])
             g.add_edges_from([(d.asset.name, r.asset.name) for r in relatives for d in r.parents])
         return dagviz(g, round_angle=True)
 
