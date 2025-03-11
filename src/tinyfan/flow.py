@@ -1,9 +1,10 @@
 import inspect
+import asyncio
 from .stores.base import StoreBase
 from .stores.naive import NaiveStore
 from .flowrundata import FlowRunData, StoreIdx, UMeta
 from dataclasses import dataclass, field
-from typing import Callable, Any, Generic, TypeVar
+from typing import Callable, Any, Generic, TypeVar, Awaitable, Coroutine, cast
 from .resources.base import ResourceBase
 from .argo_typing import ScriptTemplate
 from .config import Config, ConfigValue
@@ -41,7 +42,7 @@ DEFAULT_FLOW: Flow = Flow(
 @dataclass
 class Asset(Generic[Ret, UMeta, StoreIdx]):
     flow: Flow
-    func: Callable[..., Ret]
+    func: Callable[..., Ret | Awaitable[Ret]]
     store: StoreBase[Ret, UMeta, StoreIdx]
     schedule: str | None = None
     tz: str | None = None
@@ -84,11 +85,15 @@ class Asset(Generic[Ret, UMeta, StoreIdx]):
             if name in func_param_names:
                 params[name] = data
         ret = self.func(**params)
-        store_entry_idx = self.store.store(ret, rundata)
+        if inspect.isawaitable(ret):
+            res: Ret = asyncio.run(cast(Coroutine[Any, Any, Ret], ret))
+        else:
+            res = cast(Ret, ret)
+        store_entry_idx = self.store.store(res, rundata)
         rundata["store_entry_idx"] = store_entry_idx
         if "parents" in rundata:
             del rundata["parents"]
-        return (ret, rundata)
+        return (res, rundata)
 
 
 class AssetFunc(Generic[Ret, UMeta, StoreIdx]):
