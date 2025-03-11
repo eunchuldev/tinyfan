@@ -197,7 +197,7 @@ class AssetTree:
         for (_, schedule), relatives in relatives_by_schedules.items():
             g.add_edge(self.flow.name, schedule)
             g.add_edges_from([(schedule, r.asset.name) for r in relatives])
-            g.add_edges_from([(r.asset.name, d.asset.name) for r in relatives for d in r.parents])
+            g.add_edges_from([(d.asset.name, r.asset.name) for r in relatives for d in r.parents])
         return dagviz(g, round_angle=True)
 
     def compile(
