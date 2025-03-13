@@ -229,11 +229,11 @@ class AssetTree:
             root_location = get_root_path(list(self.nodes.values())[0].asset.func)
             source += embed(root_location)
             if not root_location.endswith(".py"):
-                source += """{{=join(map(fromJSON(inputs.parameters.moduledata), {"from " + .module + " import " + .name}), "\\n")}}\n"""
+                source += """{{=join(map(fromJSON(inputs.parameters.moduledata), {"from " + .module + " import " + .name}), ";")}}\n"""
             source += "asset = {{inputs.parameters.asset_name}}.asset\n"
         else:
             source = (
-                """{{=join(map(fromJSON(inputs.parameters.moduledata), {"from " + .module + " import " + .name}), "\\n")}}\n"""
+                """{{=join(map(fromJSON(inputs.parameters.moduledata), {"from " + .module + " import " + .name}), ";")}}\n"""
                 "asset = {{inputs.parameters.asset_name}}.asset\n"
             )
         source += (
@@ -262,23 +262,28 @@ class AssetTree:
                     "workflowSpec": {
                         "entrypoint": "flow",
                         **dropnone({"serviceAccountName": serviceAccountName or self.flow.serviceAccountName}),
-                        "podSpecPatch": yaml_dump(
+                        **dropnone(
                             {
-                                "containers": [
-                                    deepmerge(
-                                        {
-                                            "name": "main",
-                                            "env": [
+                                "podSpecPatch": (container or self.flow.container)
+                                and yaml_dump(
+                                    {
+                                        "containers": [
+                                            deepmerge(
                                                 {
-                                                    "name": "TINYFAN_SOURCE",
-                                                    "value": source,
-                                                }
-                                            ],
-                                        },
-                                        container or {},
-                                        self.flow.container or {},
-                                    )
-                                ]
+                                                    "name": "main",
+                                                    "env": [
+                                                        {
+                                                            "name": "TINYFAN_SOURCE",
+                                                            "value": source,
+                                                        }
+                                                    ],
+                                                },
+                                                container or {},
+                                                self.flow.container or {},
+                                            )
+                                        ]
+                                    }
+                                )
                             }
                         ),
                         "templates": [
@@ -339,16 +344,21 @@ class AssetTree:
                                     self.flow.container or {},
                                     node.asset.container or {},
                                 ),
-                                "podSpecPatch": yaml_dump(
+                                **dropnone(
                                     {
-                                        "containers": [
-                                            deepmerge(
-                                                {
-                                                    "name": "main",
-                                                },
-                                                node.asset.container or {},
-                                            )
-                                        ]
+                                        "podSpecPatch": node.asset.container
+                                        and yaml_dump(
+                                            {
+                                                "containers": [
+                                                    deepmerge(
+                                                        {
+                                                            "name": "main",
+                                                        },
+                                                        node.asset.container,
+                                                    )
+                                                ]
+                                            }
+                                        ),
                                     }
                                 ),
                                 "synchronization": {

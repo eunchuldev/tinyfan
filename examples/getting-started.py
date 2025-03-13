@@ -9,9 +9,16 @@ def target() -> str:
     return "world"
 
 
+@tinyfan.asset(
+    schedule="*/1 * * * *",
+)
+def target2() -> str:
+    return "earth"
+
+
 @tinyfan.asset()
-def greeting(target: str):
-    print("hello " + target)
+def greeting(target: str, target2: str):
+    print("hello " + target, "hello " + target2)
 
 
 @tinyfan.asset(
