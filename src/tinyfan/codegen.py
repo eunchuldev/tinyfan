@@ -229,12 +229,11 @@ class AssetTree:
             root_location = get_root_path(list(self.nodes.values())[0].asset.func)
             source += embed(root_location)
             if not root_location.endswith(".py"):
-                source += "from {{inputs.parameters.module_name}} import {{inputs.parameters.asset_name}}\n"
+                source += """{{=join(map(fromJSON(inputs.parameters.moduledata), {"from " + .module + " import " + .name}), "\\n")}}\n"""
             source += "asset = {{inputs.parameters.asset_name}}.asset\n"
         else:
             source = (
-                "from {{inputs.parameters.module_name}}"
-                " import {{inputs.parameters.asset_name}}\n"
+                """{{=join(map(fromJSON(inputs.parameters.moduledata), {"from " + .module + " import " + .name}), "\\n")}}\n"""
                 "asset = {{inputs.parameters.asset_name}}.asset\n"
             )
         source += (
@@ -366,7 +365,7 @@ class AssetTree:
                                             "value": "{{= nil }}",
                                         },
                                         {
-                                            "name": "module_name",
+                                            "name": "moduledata",
                                             "value": "{{= nil }}",
                                         },
                                     ]
@@ -406,8 +405,22 @@ class AssetTree:
                                                         "value": node.asset.name,
                                                     },
                                                     {
-                                                        "name": "module_name",
-                                                        "value": node.asset_module_name(),
+                                                        "name": "moduledata",
+                                                        "value": json.dumps(
+                                                            [
+                                                                {
+                                                                    "module": node.asset_module_name(),
+                                                                    "name": node.asset.name,
+                                                                },
+                                                                *(
+                                                                    {
+                                                                        "module": p.asset_module_name(),
+                                                                        "name": p.asset.name,
+                                                                    }
+                                                                    for p in node.parents
+                                                                ),
+                                                            ]
+                                                        ),
                                                     },
                                                 ]
                                             },
