@@ -66,6 +66,10 @@ def import_all_submodules(location: str):
             importlib.import_module(name)
 
 
+def assetname2template(name: str):
+    return name.replace("_", "-")
+
+
 class AssetNode:
     asset: Asset
     refs: list[Config | ConfigValue | str | None]
@@ -106,7 +110,8 @@ class AssetNode:
                         DATETIME_ANNOTATION: "{{workflow.scheduledTime}}",
                     },
                     "parents": {
-                        p.asset.name: "{{tasks.%s.outputs.parameters.rundata}}" % p.asset.name for p in self.parents
+                        p.asset.name: "{{tasks.%s.outputs.parameters.rundata}}" % p.asset.name.replace("_", "-")
+                        for p in self.parents
                     },
                     "asset_name": self.asset.name,
                     "flow_name": self.asset.flow.name,
@@ -347,7 +352,9 @@ class AssetTree:
                                         ]
                                     }
                                 ),
-                                "synchronization": {"mutexes": [{"name": f"{self.flow.name}-{node.asset.name}"}]},
+                                "synchronization": {
+                                    "mutexes": [{"name": f"{self.flow.name}-{node.asset.name.replace('_', '-')}"}]
+                                },
                                 "inputs": {
                                     "parameters": [
                                         {
