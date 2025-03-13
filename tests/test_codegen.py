@@ -21,6 +21,14 @@ def sample_flow() -> Generator:
     def asset2(asset1: str):  # type: ignore
         print("asset1 says: " + asset1)
 
+    @asset(flow=flow, depends="asset1 && asset2")
+    def asset3(asset1: str):  # type: ignore
+        print("asset1 says: " + asset1)
+
+    @asset(flow=flow, depends="asset2")
+    def asset4(asset1: str):  # type: ignore
+        print("asset1 says: " + asset1)
+
     yield flow
     FLOW_REGISTER.clear()
 
@@ -132,9 +140,18 @@ def test_codegen_directory(validate_crds):
 def test_rundata_data_interval(sample_flow):
     tree = AssetTree(sample_flow)
     node = list(tree.nodes.values())[0]
-    # rundatatmpl = node.rundatatmpl("0 * * * * *")
     daily = node.rundatatmpl("@daily")
     assert (
         daily
         == """{"ds": "{{=sprig.date('2006-01-02', sprig.dateModify('-86400.0s', sprig.toDate('2006-01-02T15:04:05Z07:00', workflow.scheduledTime)))}}", "ts": "{{=sprig.dateModify('-86400.0s', sprig.toDate('2006-01-02T15:04:05Z07:00', workflow.scheduledTime))}}", "data_interval_start": {"__tinyfan_datetime__": "{{=sprig.dateModify('-86400.0s', sprig.toDate('2006-01-02T15:04:05Z07:00', workflow.scheduledTime))}}"}, "data_interval_end": {"__tinyfan_datetime__": "{{workflow.scheduledTime}}"}, "parents": {}, "asset_name": "asset1", "flow_name": "test", "module_name": "tests.test_codegen"}"""
     )
+
+
+def test_depends(sample_flow):
+    tree = AssetTree(sample_flow)
+    assert [node.asset.depends for node in tree.nodes.values()] == [
+        "",
+        "asset1",
+        "asset1 && asset2",
+        "asset2 && asset1",
+    ]

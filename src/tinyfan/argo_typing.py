@@ -93,6 +93,22 @@ class EnvVar(TypedDict):
     valueFrom: NotRequired[EnvVarSource]
 
 
+class ConfigMapEnvSource(TypedDict, total=False):
+    name: str
+    optional: bool
+
+
+class SecretEnvSource(TypedDict, total=False):
+    name: str
+    optional: bool
+
+
+class EnvFromSource(TypedDict, total=False):
+    configMapRef: ConfigMapEnvSource
+    secretRef: SecretEnvSource
+    prefix: str
+
+
 class Lifecycle(TypedDict, total=False):
     postStart: LifecycleHandler
     preStop: LifecycleHandler
@@ -183,7 +199,7 @@ class ScriptTemplate(TypedDict, total=False):
     args: list[str]
     command: list[str]
     env: list[EnvVar]
-    envFrom: list[EnvVar]
+    envFrom: list[EnvFromSource]
     image: str
     imagePullPolicy: str
     lifecycle: Lifecycle

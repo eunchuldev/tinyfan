@@ -117,11 +117,11 @@ class AssetNode:
 
     def relatives(self, result: set[Self] | None = None) -> set[Self]:
         if result is None:
-            result = set[Self]([self])
-        for o in self.parents + self.children:
-            if o not in result:
-                result.add(o)
-                o.relatives(result)
+            result = {self}
+        for node in self.parents + self.children:
+            if node not in result:
+                result.add(node)
+                node.relatives(result)
         return result
 
 
@@ -142,18 +142,23 @@ class AssetTree:
                 | set(inspect.get_annotations(FlowRunData).keys())
             )
             unknown_names = [n for n in func_param_names if n not in known_names]
-            if len(unknown_names) > 0:
+            if unknown_names:
                 raise Exception(
                     f"unknown asset args: {', '.join('`' + n + '`' for n in unknown_names)} from asset `{node.asset.name}`"
                 )
 
             params_ids = set(name for name in func_param_names if name in self.flow.assets)
             if node.asset.depends is not None:
+                assert re.match(VALID_DEPENDS_REGEXP, node.asset.depends)
                 depends_ids = set(re.findall(EXTRACT_DEPENDS_REGEXP, node.asset.depends))
                 node.parents = [self.nodes[n] for n in depends_ids.union(params_ids)]
-                node.asset.depends = f"({node.asset.depends}) && {' && '.join(params_ids - depends_ids)}".replace(
-                    "_", "-"
-                )
+                new_ids = params_ids - depends_ids
+                if new_ids:
+                    if len(depends_ids) > 1:
+                        node.asset.depends = f"({node.asset.depends}) && {' && '.join(new_ids)}".replace("_", "-")
+                    else:
+                        node.asset.depends = f"{node.asset.depends} && {' && '.join(new_ids)}".replace("_", "-")
+                    assert re.match(VALID_DEPENDS_REGEXP, node.asset.depends)
                 for p in node.parents:
                     p.children.append(node)
             else:
@@ -189,10 +194,9 @@ class AssetTree:
 
         from .dagviz import dagviz
 
-        relatives_by_schedules = self.relatives_by_schedules()
         g: nx.DiGraph = nx.DiGraph()
         g.add_node(self.flow.name, bullet="■")
-        for (tz, schedule), relatives in relatives_by_schedules.items():
+        for (tz, schedule), relatives in self.relatives_by_schedules().items():
             schedule_node_name = schedule + f" ({tz})"
             g.add_node(schedule_node_name, bullet="○")
             g.add_edge(self.flow.name, schedule_node_name)
