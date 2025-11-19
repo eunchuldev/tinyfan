@@ -47,7 +47,7 @@ def greeting(world: str):
 ```shell
 # Apply the changes to argo workflow
 
-tinyfan template main.py | kubectl apply -f -
+tinyfan main.py | kubectl apply -f -
 ```
 
 # Real World Example (still tiny though!)

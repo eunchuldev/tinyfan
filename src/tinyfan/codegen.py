@@ -257,7 +257,7 @@ class AssetTree:
                     "generateName": f"""{self.flow.name}-{encode_schedule_to_k8sname(tz, schedule)}-""",
                 },
                 "spec": {
-                    "schedule": schedule,
+                    "schedules": [schedule],
                     "timezone": tz,
                     "workflowSpec": {
                         "entrypoint": "flow",

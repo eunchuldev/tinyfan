@@ -1,6 +1,6 @@
 [project]
 name = "tinyfan"
-version = "0.2.8"
+version = "0.2.9"
 description = 'Tiny Argo Workflows python devkit'
 readme = "README.md"
 requires-python = ">=3.12"
@@ -14,7 +14,7 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Typing :: Typed",
 ]
-dependencies = ["croniter>=3.0.3", "pyyaml>=6.0.2", "typer-slim>=0.15.1"]
+dependencies = ["croniter>=6.0.0", "pyyaml>=6.0.3", "typer-slim>=0.20.0"]
 
 [project.scripts]
 tinyfan = "tinyfan.cli:main"
@@ -34,6 +34,7 @@ dev = [
   "types-PyYAML",
   "types-jsonschema",
   "types-croniter",
+  "types-networkx",
   "tinyfan[all]",
 ]
 
