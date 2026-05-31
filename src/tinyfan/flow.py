@@ -6,7 +6,7 @@ from .flowrundata import FlowRunData, StoreIdx, UMeta
 from dataclasses import dataclass, field
 from typing import Callable, Any, Generic, TypeVar, Awaitable, Coroutine, cast
 from .resources.base import ResourceBase
-from .argo_typing import ScriptTemplate
+from .argo_typing import ScriptTemplate, TemplateInputs, TemplateOutputs
 from .config import Config, ConfigValue
 
 FLOW_REGISTER = {}
@@ -51,6 +51,8 @@ class Asset(Generic[Ret, UMeta, StoreIdx]):
     name: str = field(init=False)
     container: ScriptTemplate | None = None
     serviceAccountName: str | None = None
+    inputs: TemplateInputs | None = None
+    outputs: TemplateOutputs | None = None
 
     def __post_init__(self):
         self.name = self.func.__name__
@@ -118,6 +120,8 @@ def asset(
     metadata: UMeta | None = None,
     container: ScriptTemplate | None = None,
     serviceAccountName: str | None = None,
+    inputs: TemplateInputs | None = None,
+    outputs: TemplateOutputs | None = None,
 ) -> Callable[..., AssetFunc[Ret, UMeta, StoreIdx]]:
     def wrapper(func: Callable[..., Ret]) -> AssetFunc[Ret, UMeta, StoreIdx]:
         asset = Asset[Ret, UMeta, StoreIdx](
@@ -130,6 +134,8 @@ def asset(
             metadata=metadata,
             container=container,
             serviceAccountName=serviceAccountName,
+            inputs=inputs,
+            outputs=outputs,
         )
         return AssetFunc(func, asset)
 

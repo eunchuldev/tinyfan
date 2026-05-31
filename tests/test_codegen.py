@@ -5,6 +5,7 @@ from jsonschema.exceptions import ValidationError
 from typing import Generator
 import os
 import pytest
+import yaml
 
 
 # type: ignore
@@ -101,6 +102,38 @@ def test_codegen_flow(validate_crds, sample_flow):
     actual = codegen(flow=sample_flow)
     validate_crds(actual)
     assert_code_is_running(actual)
+
+
+def test_codegen_asset_inputs_outputs(validate_crds):
+    flow: Flow = Flow("test-io")
+
+    @asset(
+        flow=flow,
+        schedule="@daily",
+        inputs={"parameters": [{"name": "message", "value": "hello"}]},
+        outputs={"parameters": [{"name": "summary", "valueFrom": {"path": "/tmp/summary.txt"}}]},
+    )
+    def asset1():  # type: ignore
+        return "hello"
+
+    try:
+        actual = codegen(flow=flow)
+        validate_crds(actual)
+        manifest = next(yaml.load_all(actual, yaml.Loader))
+        template = next(
+            template
+            for template in manifest["spec"]["workflowSpec"]["templates"]
+            if template["name"] == "asset1"
+        )
+        input_params = {param["name"]: param for param in template["inputs"]["parameters"]}
+        output_params = {param["name"]: param for param in template["outputs"]["parameters"]}
+
+        assert input_params["message"] == {"name": "message", "value": "hello"}
+        assert {"rundata", "asset_name", "moduledata"}.issubset(input_params.keys())
+        assert output_params["summary"] == {"name": "summary", "valueFrom": {"path": "/tmp/summary.txt"}}
+        assert output_params["rundata"] == {"name": "rundata", "valueFrom": {"path": "/tmp/tinyfan/rundata.json"}}
+    finally:
+        FLOW_REGISTER.clear()
 
 
 def test_codegen_implicit(validate_crds, sample_flow):

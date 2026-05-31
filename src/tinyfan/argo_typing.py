@@ -1,4 +1,4 @@
-from typing import TypedDict, NotRequired
+from typing import Any, TypedDict, NotRequired
 
 
 class ExecAction(TypedDict):
@@ -192,6 +192,16 @@ class VolumeMount(TypedDict, total=False):
     recursiveReadOnly: str
     subPath: str
     subPathExpr: str
+
+
+class TemplateInputs(TypedDict, total=False):
+    artifacts: list[dict[str, Any]]
+    parameters: list[dict[str, Any]]
+
+
+class TemplateOutputs(TypedDict, total=False):
+    artifacts: list[dict[str, Any]]
+    parameters: list[dict[str, Any]]
 
 
 # Ref: https://argo-workflows.readthedocs.io/en/latest/fields/#scripttemplate

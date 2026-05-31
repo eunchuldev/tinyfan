@@ -1,4 +1,5 @@
 from tinyfan.flow import Flow, Asset, FLOW_REGISTER, DEFAULT_IMAGE
+import copy
 import importlib.util
 from typing import Self
 from .utils.yaml import dump as yaml_dump, dump_all as yaml_dump_all
@@ -11,7 +12,7 @@ import os
 import pkgutil
 import datetime
 import croniter
-from .argo_typing import ScriptTemplate
+from .argo_typing import ScriptTemplate, TemplateInputs, TemplateOutputs
 from .utils.embed import embed
 from .utils.merge import deepmerge, dropnone
 from .config import CLI_CONFIG_STATE, Config, ConfigValue, ConfigMapKeyRef, ConfigMapRef, SecretKeyRef, SecretRef
@@ -23,6 +24,34 @@ VALID_DEPENDS_REGEXP = r"^(?!.*\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+)(?!.*\.(?!Succeede
 EXTRACT_DEPENDS_REGEXP = r"(?<!\.)\b([A-Za-z0-9_]+)\b"
 
 RUNDATA_FILE_PATH = "/tmp/tinyfan/rundata.json"
+INTERNAL_INPUT_PARAMETERS = {"rundata", "asset_name", "moduledata"}
+INTERNAL_OUTPUT_PARAMETERS = {"rundata"}
+
+
+def merge_template_io(template_io: dict, user_io: TemplateInputs | TemplateOutputs | None, reserved_parameter_names: set[str]) -> dict:
+    result = copy.deepcopy(template_io)
+    if user_io is None:
+        return result
+    for key, value in user_io.items():
+        if key in ("parameters", "artifacts"):
+            if not isinstance(value, list):
+                raise TypeError(f"asset {key} must be a list")
+            if key == "parameters":
+                conflicts = [
+                    param.get("name")
+                    for param in value
+                    if isinstance(param, dict) and param.get("name") in reserved_parameter_names
+                ]
+                if conflicts:
+                    names = ", ".join(f"`{name}`" for name in conflicts)
+                    raise ValueError(f"asset parameters cannot redefine tinyfan internal parameter(s): {names}")
+            result.setdefault(key, [])
+            result[key].extend(copy.deepcopy(value))
+        elif isinstance(result.get(key), dict) and isinstance(value, dict):
+            result[key] = deepmerge(result[key], copy.deepcopy(value))
+        else:
+            result[key] = copy.deepcopy(value)
+    return result
 
 
 def brackets_balanced(code: str) -> bool:
@@ -364,32 +393,40 @@ class AssetTree:
                                 "synchronization": {
                                     "mutexes": [{"name": f"{self.flow.name}-{node.asset.name.replace('_', '-')}"}]
                                 },
-                                "inputs": {
-                                    "parameters": [
-                                        {
-                                            "name": "rundata",
-                                            "value": "{{= nil }}",
-                                        },
-                                        {
-                                            "name": "asset_name",
-                                            "value": "{{= nil }}",
-                                        },
-                                        {
-                                            "name": "moduledata",
-                                            "value": "{{= nil }}",
-                                        },
-                                    ]
-                                },
-                                "outputs": {
-                                    "parameters": [
-                                        {
-                                            "name": "rundata",
-                                            "valueFrom": {
-                                                "path": RUNDATA_FILE_PATH,
+                                "inputs": merge_template_io(
+                                    {
+                                        "parameters": [
+                                            {
+                                                "name": "rundata",
+                                                "value": "{{= nil }}",
                                             },
-                                        }
-                                    ],
-                                },
+                                            {
+                                                "name": "asset_name",
+                                                "value": "{{= nil }}",
+                                            },
+                                            {
+                                                "name": "moduledata",
+                                                "value": "{{= nil }}",
+                                            },
+                                        ]
+                                    },
+                                    node.asset.inputs,
+                                    INTERNAL_INPUT_PARAMETERS,
+                                ),
+                                "outputs": merge_template_io(
+                                    {
+                                        "parameters": [
+                                            {
+                                                "name": "rundata",
+                                                "valueFrom": {
+                                                    "path": RUNDATA_FILE_PATH,
+                                                },
+                                            }
+                                        ],
+                                    },
+                                    node.asset.outputs,
+                                    INTERNAL_OUTPUT_PARAMETERS,
+                                ),
                             }
                             for node in relatives
                         ]

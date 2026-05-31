@@ -54,7 +54,7 @@ def zip_directory(
         files -= set().union(*map(path.glob, excludes))
         for file_path in map(str, files):
             arcname = os.path.relpath(file_path, start=parent_dir)
-            with open(file_path, "r") as f:
+            with open(file_path, "r", encoding="utf-8") as f:
                 try:
                     source = f.read()
                 except Exception as e:
@@ -67,7 +67,7 @@ def zip_directory(
 
 
 def embed_singlefile(path: str) -> str:
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         sourcecode = f.read()
     return sourcecode
 
