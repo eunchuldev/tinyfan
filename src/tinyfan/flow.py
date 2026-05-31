@@ -83,7 +83,10 @@ class Asset(Generic[Ret, UMeta, StoreIdx]):
         for name, prundata in parent_flowrundatas.items():
             parent = self.flow.assets[name]
             index = prundata.get("store_entry_idx", None)
-            data = index and parent.store.retrieve(index, source_rundata=prundata, target_rundata=rundata)
+            if index is not None:
+                data = parent.store.retrieve(index, source_rundata=prundata, target_rundata=rundata)
+            else:
+                data = None
             if name in func_param_names:
                 params[name] = data
         ret = self.func(**params)

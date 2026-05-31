@@ -1,6 +1,6 @@
 [project]
 name = "tinyfan"
-version = "0.2.9"
+version = "0.3.0"
 description = 'Tiny Argo Workflows python devkit'
 readme = "README.md"
 requires-python = ">=3.12"
@@ -9,12 +9,10 @@ authors = [{ name = "eunchuldev", email = "eunchulsong@gmail.com" }]
 classifiers = [
   "Operating System :: OS Independent",
   "License :: OSI Approved :: MIT License",
-  "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Typing :: Typed",
 ]
-dependencies = ["croniter>=6.0.0", "pyyaml>=6.0.3", "typer-slim>=0.20.0"]
+dependencies = ["croniter>=6", "pyyaml>=6.0.3", "typer-slim>=0.24.0"]
 
 [project.scripts]
 tinyfan = "tinyfan.cli:main"
@@ -54,7 +52,7 @@ addopts = ["--import-mode=importlib"]
 exclude = ['build']
 
 [[tool.mypy.overrides]]
-module = ["lark.*", "jsonpatch.*"]
+module = ["lark.*", "jsonpatch.*", "google.*"]
 ignore_missing_imports = true
 
 [tool.ruff]

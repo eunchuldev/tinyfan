@@ -498,17 +498,19 @@ def codegen(
     serviceAccountName: str | None = None,
 ) -> str:
     """Generate argocd workflow resource as yaml from tinyfan definitions"""
-    CLI_CONFIG_STATE.codegen = True
-    if flow:
-        result = AssetTree(flow).compile(embedded, container, serviceAccountName)
-    elif location:
-        import_all_submodules(location)
-        result = "\n---\n".join(
-            AssetTree(flow).compile(embedded, container, serviceAccountName) for flow in FLOW_REGISTER.values()
-        )
-    else:
-        result = "\n---\n".join(
-            AssetTree(flow).compile(embedded, container, serviceAccountName) for flow in FLOW_REGISTER.values()
-        )
-    CLI_CONFIG_STATE.codegen = False
+    try:
+        CLI_CONFIG_STATE.codegen = True
+        if flow:
+            result = AssetTree(flow).compile(embedded, container, serviceAccountName)
+        elif location:
+            import_all_submodules(location)
+            result = "\n---\n".join(
+                AssetTree(flow).compile(embedded, container, serviceAccountName) for flow in FLOW_REGISTER.values()
+            )
+        else:
+            result = "\n---\n".join(
+                AssetTree(flow).compile(embedded, container, serviceAccountName) for flow in FLOW_REGISTER.values()
+            )
+    finally:
+        CLI_CONFIG_STATE.codegen = False
     return result
