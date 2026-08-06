@@ -1,4 +1,5 @@
 from tinyfan.flow import Flow, Asset, FLOW_REGISTER, DEFAULT_IMAGE
+import ast
 import copy
 import importlib.util
 from typing import Self
@@ -9,7 +10,8 @@ import sys
 import re
 import json
 import os
-import pkgutil
+from pathlib import Path
+import tokenize
 import datetime
 import croniter
 from .argo_typing import ScriptTemplate, TemplateInputs, TemplateOutputs
@@ -28,7 +30,9 @@ INTERNAL_INPUT_PARAMETERS = {"rundata", "asset_name", "moduledata"}
 INTERNAL_OUTPUT_PARAMETERS = {"rundata"}
 
 
-def merge_template_io(template_io: dict, user_io: TemplateInputs | TemplateOutputs | None, reserved_parameter_names: set[str]) -> dict:
+def merge_template_io(
+    template_io: dict, user_io: TemplateInputs | TemplateOutputs | None, reserved_parameter_names: set[str]
+) -> dict:
     result = copy.deepcopy(template_io)
     if user_io is None:
         return result
@@ -75,7 +79,85 @@ def encode_schedule_to_k8sname(tz: str, cron: str) -> str:
     return f"{tz}|{cron}".lower().translate(str.maketrans("* ,-/_+|", "a-cds-p-", "@"))[:58]
 
 
-def import_all_submodules(location: str):
+def _defines_tinyfan_asset(source_path: Path) -> bool:
+    """Return whether a module has a statically recognizable Tinyfan asset."""
+    with tokenize.open(source_path) as source_file:
+        tree = ast.parse(source_file.read(), filename=str(source_path))
+
+    asset_names: set[str] = set()
+    tinyfan_namespaces: set[str] = set()
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for imported in node.names:
+                if imported.name == "tinyfan":
+                    tinyfan_namespaces.add(imported.asname or "tinyfan")
+                elif imported.name == "tinyfan.flow":
+                    tinyfan_namespaces.add(imported.asname or "tinyfan")
+        elif isinstance(node, ast.ImportFrom) and node.module in {"tinyfan", "tinyfan.flow"}:
+            for imported in node.names:
+                if imported.name == "asset":
+                    asset_names.add(imported.asname or imported.name)
+                elif imported.name == "*":
+                    asset_names.add("asset")
+
+    def is_asset_decorator(decorator: ast.expr) -> bool:
+        while isinstance(decorator, ast.Call):
+            decorator = decorator.func
+        if isinstance(decorator, ast.Name):
+            return decorator.id in asset_names
+
+        names: list[str] = []
+        while isinstance(decorator, ast.Attribute):
+            names.append(decorator.attr)
+            decorator = decorator.value
+        if isinstance(decorator, ast.Name):
+            names.append(decorator.id)
+        names.reverse()
+        return len(names) >= 2 and names[0] in tinyfan_namespaces and names[-1] == "asset"
+
+    class AssetVisitor(ast.NodeVisitor):
+        found = False
+
+        def _visit_definition(self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            if any(is_asset_decorator(decorator) for decorator in node.decorator_list):
+                self.found = True
+
+        def visit_FunctionDef(self, node: ast.FunctionDef):
+            self._visit_definition(node)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
+            self._visit_definition(node)
+
+        def visit_ClassDef(self, node: ast.ClassDef):
+            self._visit_definition(node)
+            if not self.found:
+                self.generic_visit(node)
+
+    visitor = AssetVisitor()
+    visitor.visit(tree)
+    return visitor.found
+
+
+def _package_source_modules(package) -> list[tuple[str, Path]]:
+    modules: list[tuple[str, Path]] = []
+    for package_path in package.__path__:
+        root = Path(package_path)
+        for source_path in root.rglob("*.py"):
+            relative_path = source_path.relative_to(root)
+            if source_path.name == "__init__.py":
+                module_parts = relative_path.parts[:-1]
+            else:
+                module_parts = relative_path.with_suffix("").parts
+            if not module_parts:
+                # Importing the root package has already executed its __init__.py.
+                continue
+            modules.append((".".join((package.__name__, *module_parts)), source_path))
+    return modules
+
+
+def import_asset_modules(location: str, import_all: bool = False):
+    """Import asset-bearing modules from a module name, package directory, or file."""
     try:
         package = importlib.import_module(location)
     except ModuleNotFoundError:
@@ -90,9 +172,16 @@ def import_all_submodules(location: str):
         package = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = package
         spec.loader.exec_module(package)
-    if package.__name__ != "__tinyfan_repo__":
-        for _, name, _ in pkgutil.walk_packages(package.__path__, package.__name__ + "."):
-            importlib.import_module(name)
+    if package.__name__ == "__tinyfan_repo__" or not hasattr(package, "__path__"):
+        return
+    for module_name, source_path in _package_source_modules(package):
+        if import_all or _defines_tinyfan_asset(source_path):
+            importlib.import_module(module_name)
+
+
+def import_all_submodules(location: str):
+    """Import every submodule, preserving the eager discovery API used before 0.3.0."""
+    import_asset_modules(location, import_all=True)
 
 
 def assetname2template(name: str):
@@ -496,6 +585,7 @@ def codegen(
     embedded: bool = False,
     container: ScriptTemplate = {},
     serviceAccountName: str | None = None,
+    import_all: bool = False,
 ) -> str:
     """Generate argocd workflow resource as yaml from tinyfan definitions"""
     try:
@@ -503,7 +593,7 @@ def codegen(
         if flow:
             result = AssetTree(flow).compile(embedded, container, serviceAccountName)
         elif location:
-            import_all_submodules(location)
+            import_asset_modules(location, import_all=import_all)
             result = "\n---\n".join(
                 AssetTree(flow).compile(embedded, container, serviceAccountName) for flow in FLOW_REGISTER.values()
             )

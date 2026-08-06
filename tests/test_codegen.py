@@ -4,6 +4,7 @@ from tinyfan.codegen import codegen, AssetTree
 from jsonschema.exceptions import ValidationError
 from typing import Generator
 import os
+import sys
 import pytest
 import yaml
 
@@ -121,9 +122,7 @@ def test_codegen_asset_inputs_outputs(validate_crds):
         validate_crds(actual)
         manifest = next(yaml.load_all(actual, yaml.Loader))
         template = next(
-            template
-            for template in manifest["spec"]["workflowSpec"]["templates"]
-            if template["name"] == "asset1"
+            template for template in manifest["spec"]["workflowSpec"]["templates"] if template["name"] == "asset1"
         )
         input_params = {param["name"]: param for param in template["inputs"]["parameters"]}
         output_params = {param["name"]: param for param in template["outputs"]["parameters"]}
@@ -168,6 +167,74 @@ def test_codegen_directory(validate_crds):
         if e.json_path != "$.spec.templates[0].script" or e.validator != "required":
             raise e
     assert_code_is_running(actual)
+
+
+def test_codegen_directory_only_imports_asset_modules(tmp_path, monkeypatch, validate_crds):
+    FLOW_REGISTER.clear()
+    package_name = "selective_asset_package"
+    package_path = tmp_path / package_name
+    package_path.mkdir()
+    (package_path / "__init__.py").write_text("", encoding="utf-8")
+    (package_path / "flow.py").write_text(
+        'from tinyfan import Flow\nflow = Flow("selective-discovery")\n',
+        encoding="utf-8",
+    )
+    (package_path / "assets.py").write_text(
+        "import tinyfan as tf\n"
+        "from .flow import flow\n\n"
+        '@tf.asset(flow=flow, schedule="@daily")\n'
+        "def discovered_asset():\n"
+        '    return "hello"\n',
+        encoding="utf-8",
+    )
+    (package_path / "unrelated.py").write_text(
+        'raise RuntimeError("unrelated module was imported")\n',
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    try:
+        actual = codegen(location=package_name)
+
+        validate_crds(actual)
+        assert f"{package_name}.assets" in sys.modules
+        assert f"{package_name}.flow" in sys.modules
+        assert f"{package_name}.unrelated" not in sys.modules
+    finally:
+        for module_name in list(sys.modules):
+            if module_name == package_name or module_name.startswith(f"{package_name}."):
+                sys.modules.pop(module_name)
+        FLOW_REGISTER.clear()
+
+
+def test_codegen_import_all_supports_dynamic_asset_decorators(tmp_path, monkeypatch, validate_crds):
+    FLOW_REGISTER.clear()
+    package_name = "dynamic_asset_package"
+    package_path = tmp_path / package_name
+    package_path.mkdir()
+    (package_path / "__init__.py").write_text("", encoding="utf-8")
+    (package_path / "assets.py").write_text(
+        "from tinyfan import asset\n\n"
+        'scheduled_asset = asset(schedule="@daily")\n\n'
+        "@scheduled_asset\n"
+        "def dynamic_asset():\n"
+        '    return "hello"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    try:
+        codegen(location=package_name)
+        assert f"{package_name}.assets" not in sys.modules
+
+        actual = codegen(location=package_name, import_all=True)
+        validate_crds(actual)
+        assert f"{package_name}.assets" in sys.modules
+    finally:
+        for module_name in list(sys.modules):
+            if module_name == package_name or module_name.startswith(f"{package_name}."):
+                sys.modules.pop(module_name)
+        FLOW_REGISTER.clear()
 
 
 def test_rundata_data_interval(sample_flow):

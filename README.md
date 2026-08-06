@@ -50,6 +50,18 @@ def greeting(world: str):
 tinyfan main.py | kubectl apply -f -
 ```
 
+For a package, pass its directory or import name. Tinyfan statically discovers
+modules containing `@asset`, so unrelated submodules are not executed during
+manifest generation. Modules imported by an asset module (for example, a shared
+`Flow` definition) are loaded normally.
+
+```shell
+tinyfan src/my_package
+```
+
+If a project registers assets dynamically or wraps `@asset` in another decorator,
+use `--import-all` to opt into the previous eager-import behavior.
+
 # Real World Example (still tiny though!)
 
 Comming soon
