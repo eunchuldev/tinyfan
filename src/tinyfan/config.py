@@ -1,6 +1,6 @@
-from dataclasses import dataclass, field
-from abc import abstractmethod, ABC
 import os
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -18,19 +18,19 @@ def cli_arg(name: str, from_env: str | None = None, default: str | None = None) 
             if from_env is not None:
                 val = os.environ.get(from_env, default)
                 if val is None:
-                    raise Exception(f"neither of cli arg `{name}` nor env var `{from_env}` not setted.")
+                    raise ConfigError(f"neither of cli arg `{name}` nor env var `{from_env}` not setted.")
                 return val
             elif default is not None:
                 return default
             else:
-                raise Exception(f"cli arg `{name}` is not setted.")
+                raise ConfigError(f"cli arg `{name}` is not setted.")
         else:
             return CLI_CONFIG_STATE.cli_args[name]
     else:
         if default is not None:
             return CLI_CONFIG_STATE.cli_args.get(name, default)
         elif name not in CLI_CONFIG_STATE.cli_args:
-            raise Exception(f"cli arg `{name}` is not setted.")
+            raise ConfigError(f"cli arg `{name}` is not setted.")
         else:
             return CLI_CONFIG_STATE.cli_args[name]
 
@@ -38,13 +38,13 @@ def cli_arg(name: str, from_env: str | None = None, default: str | None = None) 
 class ConfigValue(ABC):
     @abstractmethod
     def get_value(self) -> str:
-        raise Exception(NotImplemented)
+        raise NotImplementedError
 
 
 class Config(ABC):
     @abstractmethod
     def get(self, name: str) -> str:
-        raise Exception(NotImplemented)
+        raise NotImplementedError
 
 
 @dataclass(frozen=True)
@@ -54,7 +54,7 @@ class ConfigMapRef(Config):
     def get(self, name: str) -> str:
         val = os.environ.get(name)
         if val is None:
-            raise Exception(f"Fail to get `{name}` from ConfigMap `{self.name}`")
+            raise ConfigError(f"Fail to get `{name}` from ConfigMap `{self.name}`")
         else:
             return val
 
@@ -66,7 +66,7 @@ class SecretRef(Config):
     def get(self, name: str) -> str:
         val = os.environ.get(name)
         if val is None:
-            raise Exception(f"Fail to get `{name}` from Secret `{self.name}`")
+            raise ConfigError(f"Fail to get `{name}` from Secret `{self.name}`")
         else:
             return val
 
@@ -83,7 +83,7 @@ class ConfigMapKeyRef(ConfigValue):
     def get_value(self) -> str:
         val = os.environ.get(self._env_name(), self.default)
         if val is None:
-            raise Exception(f"Fail to get `{self.key}` from ConfigMap `{self.name}`")
+            raise ConfigError(f"Fail to get `{self.key}` from ConfigMap `{self.name}`")
         else:
             return val
 
@@ -100,6 +100,10 @@ class SecretKeyRef(ConfigValue):
     def get_value(self) -> str:
         val = os.environ.get(self._env_name(), self.default)
         if val is None:
-            raise Exception(f"Fail to get `{self.key}` from Secret `{self.name}`")
+            raise ConfigError(f"Fail to get `{self.key}` from Secret `{self.name}`")
         else:
             return val
+
+
+class ConfigError(Exception):
+    """Required Tinyfan configuration is missing or invalid."""

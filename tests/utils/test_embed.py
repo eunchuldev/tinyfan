@@ -1,9 +1,8 @@
 import os.path
-import pytest
+import subprocess
 import sys
-from io import StringIO
-from contextlib import redirect_stdout
-from unittest.mock import patch
+
+import pytest
 
 
 def test_embed_singlefile():
@@ -19,12 +18,16 @@ def test_embed_directory():
 
     p = os.path.join(os.path.dirname(__file__), "embed_samples/directory")
     snippet = embed_directory(p)
-    f = StringIO()
-    print(snippet)
-    with redirect_stdout(f):
-        exec(snippet)
-        import directory  # type: ignore # noqa
-    assert "hi\n" == f.getvalue()
+    result = subprocess.run(
+        [sys.executable, "-I", "-S", "-"],
+        input=snippet + "\nimport directory\n",
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "hi\n"
 
 
 def test_embed_module():
@@ -32,24 +35,42 @@ def test_embed_module():
 
     snippet = embed_module("tinyfan", excludes=["codegen.py", "utils/embed.py", "**/__pycache__/*"], minify=True)
     assert len(snippet) < 64 * 1000
-    sys.modules.pop("tinyfan", None)
-    with patch.object(sys, "path", []):
-        try:
-            import tinyfan as _
+    result = subprocess.run(
+        [sys.executable, "-I", "-S", "-"],
+        input=snippet
+        + "from tinyfan import Flow, asset\n"
+        + 'flow = Flow("test-flow")\n'
+        + "@asset(flow=flow)\n"
+        + "def asset1():\n"
+        + '    return "test"\n'
+        + 'res, _ = flow.assets["asset1"].run()\n'
+        + 'assert res == "test"\n',
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
 
-            pytest.fail("Success to import tinyfan before deserializtion")
-        except ImportError:
-            pass
 
-        exec(snippet)
+@pytest.mark.parametrize("minify", [False, True])
+def test_embed_preserves_runtime_annotations(tmp_path, minify):
+    from tinyfan.utils.embed import embed
 
-        from tinyfan import Flow, asset
-
-        flow = Flow("test-flow")
-
-        @asset(flow=flow)
-        def asset1():
-            return "test"
-
-        res, _ = flow.assets["asset1"].run()
-        assert res == "test"
+    package = tmp_path / "typed_package"
+    package.mkdir()
+    package.joinpath("__init__.py").write_text(
+        "from dataclasses import dataclass\n"
+        "from typing import cast\n"
+        "@dataclass\n"
+        "class Result:\n"
+        "    value: str\n"
+        'print(Result(cast(str, "annotations preserved")).value)\n',
+        encoding="utf-8",
+    )
+    source = embed(str(package), minify=minify) + "\nimport typed_package\n"
+    result = subprocess.run(
+        [sys.executable, "-I", "-S", "-"], input=source, capture_output=True, text=True, check=False, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "annotations preserved"

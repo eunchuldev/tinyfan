@@ -853,7 +853,7 @@ wheels = [
 
 [[package]]
 name = "tinyfan"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "croniter" },
@@ -903,7 +903,7 @@ viz = [
 
 [package.metadata]
 requires-dist = [
-    { name = "croniter", specifier = ">=6.0.0" },
+    { name = "croniter", specifier = ">=6" },
     { name = "google-cloud-bigquery", extras = ["pandas"], marker = "extra == 'bigquery'" },
     { name = "google-cloud-storage", marker = "extra == 'gcs'" },
     { name = "jsonpatch", marker = "extra == 'dev'", specifier = ">=1" },

@@ -1,12 +1,13 @@
-from abc import abstractmethod, ABC
-from typing import Generic, TypeVar
+from abc import ABC, abstractmethod
+from typing import TypeVar
+
+from ..flowrundata import FlowRunData
 from ..resources.base import ResourceBase
-from ..flowrundata import FlowRunData, StoreIdx, UMeta
 
 T = TypeVar("T")
 
 
-class StoreBase(ABC, ResourceBase, Generic[T, UMeta, StoreIdx]):
+class StoreBase[T, UMeta, StoreIdx](ABC, ResourceBase):
     @staticmethod
     @abstractmethod
     def id() -> str:
@@ -19,7 +20,6 @@ class StoreBase(ABC, ResourceBase, Generic[T, UMeta, StoreIdx]):
         rundata: FlowRunData[UMeta, StoreIdx],
     ) -> StoreIdx:
         """should return store index, which is used when retrieve back"""
-        pass
 
     @abstractmethod
     def retrieve(

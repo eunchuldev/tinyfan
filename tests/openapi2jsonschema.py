@@ -39,10 +39,9 @@ def test_additional_properties():
 def additional_properties(data, skip=False):
     "This recreates the behaviour of kubectl at https://github.com/kubernetes/kubernetes/blob/225b9119d6a8f03fcbe3cc3d590c261965d928d0/pkg/kubectl/validation/schema.go#L312"
     if isinstance(data, dict):
-        if "properties" in data and not skip:
-            if "additionalProperties" not in data:
-                data["additionalProperties"] = False
-        for _, v in data.items():
+        if "properties" in data and not skip and "additionalProperties" not in data:
+            data["additionalProperties"] = False
+        for v in data.values():
             additional_properties(v)
     return data
 
@@ -74,7 +73,7 @@ def replace_int_or_string(data):
                 else:
                     new_v = replace_int_or_string(v)
             elif isinstance(v, list):
-                new_v = list()
+                new_v = []
                 for x in v:
                     new_v.append(replace_int_or_string(x))
             else:
@@ -93,7 +92,7 @@ def allow_null_optional_fields(data, parent=None, grand_parent=None, _=None):
             if isinstance(v, dict):
                 new_v = allow_null_optional_fields(v, data, parent, k)
             elif isinstance(v, list):
-                new_v = list()
+                new_v = []
                 for x in v:
                     new_v.append(allow_null_optional_fields(x, v, parent, k))
             elif isinstance(v, str):
@@ -140,7 +139,7 @@ def construct_value(_, node):
         raise yaml.constructor.ConstructorError(
             "while constructing a value",
             node.start_mark,
-            "expected a scalar, but found %s" % node.id,
+            f"expected a scalar, but found {node.id}",
             node.start_mark,
         )
     yield str(node.value)
@@ -156,11 +155,7 @@ class Result:
 
 
 def openapi2jsonschema(crdFile: str) -> Result | None:
-    if crdFile.startswith("http"):
-        f = urllib.request.urlopen(crdFile)
-    else:
-        f = open(crdFile)
-    with f:
+    with urllib.request.urlopen(crdFile) if crdFile.startswith("http") else open(crdFile) as f:
         defs = []
         yaml.SafeLoader.add_constructor("tag:yaml.org,2002:value", construct_value)
         for y in yaml.load_all(f, Loader=yaml.SafeLoader):
@@ -204,15 +199,11 @@ def openapi2jsonschema(crdFile: str) -> Result | None:
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Missing FILE parameter.\nUsage: %s [FILE]" % sys.argv[0])
-        exit(1)
+        print(f"Missing FILE parameter.\nUsage: {sys.argv[0]} [FILE]")
+        sys.exit(1)
 
     for crdFile in sys.argv[1:]:
-        if crdFile.startswith("http"):
-            f = urllib.request.urlopen(crdFile)
-        else:
-            f = open(crdFile)
-        with f:
+        with urllib.request.urlopen(crdFile) if crdFile.startswith("http") else open(crdFile) as f:
             defs = []
             yaml.SafeLoader.add_constructor("tag:yaml.org,2002:value", construct_value)
             for y in yaml.load_all(f, Loader=yaml.SafeLoader):
@@ -272,4 +263,4 @@ if __name__ == "__main__":
                     schema = y["spec"]["validation"]["openAPIV3Schema"]
                     write_schema_file(schema, filename)
 
-    exit(0)
+    sys.exit(0)

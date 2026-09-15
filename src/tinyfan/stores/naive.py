@@ -1,8 +1,9 @@
-from .base import StoreBase, FlowRunData
+import base64
 import pickle
 import zlib
-import base64
 from typing import Any
+
+from .base import FlowRunData, StoreBase
 
 
 def encode(s: str | bytes) -> str:

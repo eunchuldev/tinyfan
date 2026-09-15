@@ -1,12 +1,12 @@
-from typing import TypedDict
-from typing import Generic, TypeVar, Mapping
+from collections.abc import Mapping
 from datetime import datetime
+from typing import TypedDict, TypeVar
 
 UMeta = TypeVar("UMeta", bound=Mapping | None)
 StoreIdx = TypeVar("StoreIdx", bound=Mapping | str | int | None)
 
 
-class FlowRunData(TypedDict, Generic[UMeta, StoreIdx], total=False):
+class FlowRunData[UMeta, StoreIdx](TypedDict, total=False):
     # asset bound data
     metadata: UMeta
     asset_name: str

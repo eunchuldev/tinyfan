@@ -1,6 +1,7 @@
 # COPIED FROM https://github.com/ctongfei/py-dagviz
-from typing import Hashable, Dict, List
 import array
+from collections.abc import Hashable
+
 import networkx as nx
 
 
@@ -14,10 +15,10 @@ def dagviz(g: nx.DiGraph, round_angle: bool = False) -> str:
     """
     assert nx.is_directed_acyclic_graph(g), "Graph contains cycles"
 
-    rows: List[Hashable] = []
-    bullets: List[str] = []
-    node_to_row: Dict[Hashable, int] = {}
-    indents: List[int] = []
+    rows: list[Hashable] = []
+    bullets: list[str] = []
+    node_to_row: dict[Hashable, int] = {}
+    indents: list[int] = []
 
     def _process_dag(g: nx.DiGraph, indent: int):
         for sg in nx.weakly_connected_components(g):
@@ -52,5 +53,5 @@ def dagviz(g: nx.DiGraph, round_angle: bool = False) -> str:
         for k in range(indents[i] * 2 + 1, indents[n] * 2):
             a[n][k] = "─"
 
-    lines: List[str] = [x.tounicode() + f"{b} " + str(i).replace("\n", " ") for x, b, i in zip(a, bullets, rows)]
+    lines: list[str] = [x.tounicode() + f"{b} " + str(i).replace("\n", " ") for x, b, i in zip(a, bullets, rows)]
     return "\n".join(lines)

@@ -1,15 +1,17 @@
-import inspect
 import asyncio
-from .stores.base import StoreBase
-from .stores.naive import NaiveStore
-from .flowrundata import FlowRunData, StoreIdx, UMeta
+import inspect
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
-from typing import Callable, Any, Generic, TypeVar, Awaitable, Coroutine, cast
-from .resources.base import ResourceBase
+from typing import Any, TypeVar, cast
+
 from .argo_typing import ScriptTemplate, TemplateInputs, TemplateOutputs
 from .config import Config, ConfigValue
+from .flowrundata import FlowRunData
+from .resources.base import ResourceBase
+from .stores.base import StoreBase
+from .stores.naive import NaiveStore
 
-FLOW_REGISTER = {}
+FLOW_REGISTER: dict[str, "Flow"] = {}
 
 Ret = TypeVar("Ret")
 
@@ -40,7 +42,7 @@ DEFAULT_FLOW: Flow = Flow(
 
 
 @dataclass
-class Asset(Generic[Ret, UMeta, StoreIdx]):
+class Asset[Ret, UMeta, StoreIdx]:
     flow: Flow
     func: Callable[..., Ret | Awaitable[Ret]]
     store: StoreBase[Ret, UMeta, StoreIdx]
@@ -101,7 +103,7 @@ class Asset(Generic[Ret, UMeta, StoreIdx]):
         return (res, rundata)
 
 
-class AssetFunc(Generic[Ret, UMeta, StoreIdx]):
+class AssetFunc[Ret, UMeta, StoreIdx]:
     func: Callable[..., Ret]
     asset: Asset[Ret, UMeta, StoreIdx]
 
@@ -114,7 +116,7 @@ class AssetFunc(Generic[Ret, UMeta, StoreIdx]):
         return res
 
 
-def asset(
+def asset[Ret, UMeta, StoreIdx](
     flow: Flow = DEFAULT_FLOW,
     schedule: str | None = None,
     depends: str | None = None,

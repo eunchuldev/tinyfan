@@ -1,13 +1,12 @@
 import json
-import yaml
 
 import jsonpatch
 import pytest
+import yaml
 from jsonschema.validators import validator_for
 
-from .openapi2jsonschema import openapi2jsonschema
-
 from .helpers import gotmpl as _gotmpl
+from .openapi2jsonschema import openapi2jsonschema
 
 
 @pytest.fixture
@@ -19,7 +18,7 @@ def assert_manifests():
             expect,
             actual,
         )
-        res = list(p for p in res if p["op"] != "add")
+        res = [p for p in res if p["op"] != "add"]
         if len(res) > 0:
             pytest.fail(json.dumps(res, indent=4))
 
@@ -38,12 +37,9 @@ def validate_crds(pytestconfig):
             schema = pytestconfig.cache.get(path, None)
             if schema is None:
                 url = f"https://raw.githubusercontent.com/argoproj/argo-workflows/main/manifests/base/crds/full/argoproj.io_{kind.lower()}s.yaml"
-                try:
-                    res = openapi2jsonschema(url)
-                except Exception as e:
-                    pytest.fail(f"fail to retreive or convert openapi to jsonschema from `{url}`: {e!s}")
+                res = openapi2jsonschema(url)
                 if res is None:
-                    raise Exception(f"openapi2jsonschema return invalid schema for `{kind}`")
+                    pytest.fail(f"openapi2jsonschema return invalid schema for `{kind}`")
                 assert kind == res.kind
                 assert group == res.fullgroup
                 assert version == res.version

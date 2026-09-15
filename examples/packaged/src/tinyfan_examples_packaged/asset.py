@@ -1,5 +1,6 @@
-import tinyfan
 from datetime import datetime
+
+import tinyfan
 
 
 @tinyfan.asset(

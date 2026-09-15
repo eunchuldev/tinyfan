@@ -1,10 +1,14 @@
-from tinyfan import Flow, asset, ResourceBase, ConfigMapRef, ConfigMapKeyRef, SecretRef, SecretKeyRef
-from tinyfan.flow import FLOW_REGISTER
-from tinyfan.codegen import codegen
-from typing import Generator
-from unittest import mock
-import pytest
 import os
+from collections.abc import Generator
+from unittest import mock
+
+import pytest
+import yaml
+
+from tinyfan import ConfigMapKeyRef, ConfigMapRef, Flow, ResourceBase, SecretKeyRef, SecretRef, asset
+from tinyfan.codegen import codegen
+from tinyfan.flow import FLOW_REGISTER
+from tinyfan.stores.gcs_pickle import GcsPickleStore
 
 
 # type: ignore
@@ -54,7 +58,32 @@ def test_resource_config_run(sample_flow: Flow):
     }
     with mock.patch.dict(os.environ, env):
         _ = codegen(flow=sample_flow)
-        asset = list(sample_flow.assets.values())[0]
+        asset = next(iter(sample_flow.assets.values()))
         actual, _ = asset.run()
         expected = ("key", "cmkey", "default", "key", "sekey", "default")
         assert actual == expected
+
+
+def test_store_config_refs():
+    flow = Flow("store-refs", store=GcsPickleStore(ConfigMapKeyRef("storage", "bucket")))
+
+    @asset(flow=flow, schedule="@daily")
+    def source():
+        return 1
+
+    @asset(flow=flow, store=GcsPickleStore(SecretKeyRef("private-storage", "bucket")))
+    def consumer(source):
+        return source
+
+    try:
+        manifest = yaml.safe_load(codegen(flow=flow))
+        templates = {item["name"]: item for item in manifest["spec"]["workflowSpec"]["templates"]}
+        source_env = {item["name"]: item["valueFrom"] for item in templates["source"]["script"]["env"]}
+        consumer_env = {item["name"]: item["valueFrom"] for item in templates["consumer"]["script"]["env"]}
+        assert source_env["TINYFAN_CM__storage__bucket"] == {"configMapKeyRef": {"name": "storage", "key": "bucket"}}
+        assert consumer_env == {
+            **source_env,
+            "TINYFAN_SC__private-storage__bucket": {"secretKeyRef": {"name": "private-storage", "key": "bucket"}},
+        }
+    finally:
+        FLOW_REGISTER.pop(flow.name, None)

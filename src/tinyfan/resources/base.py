@@ -1,5 +1,6 @@
-from ..config import Config, ConfigValue
 import inspect
+
+from ..config import Config, ConfigValue
 
 
 class ResourceBase:

@@ -1,41 +1,13 @@
-import os
+import ast
 import base64
 import importlib
+import io
+import os
 import zipfile
 from pathlib import Path
-import io
-import ast
 
 DEFAULT_INCLUDES = ["**/*.*"]
 DEFAULT_EXCLUDES = ["**/__pycache__/*"]
-
-
-class TypeHintRemover(ast.NodeTransformer):
-    def visit_FunctionDef(self, node):
-        node.returns = None
-        if node.args.args:
-            for arg in node.args.args:
-                arg.annotation = None
-        self.generic_visit(node)
-        return node
-
-    def visit_AnnAssign(self, node):
-        if node.value is None:
-            return None
-        return ast.Assign([node.target], node.value)
-
-    def visit_Import(self, node):
-        node.names = [n for n in node.names if n.name != "typing"]
-        return node if node.names else None
-
-    def visit_ImportFrom(self, node):
-        return node if node.module != "typing" else None
-
-
-def remove_type_hint(source: str):
-    parsed_source = ast.parse(source)
-    transformed = TypeHintRemover().visit(parsed_source)
-    return ast.unparse(ast.fix_missing_locations(transformed))
 
 
 def zip_directory(
@@ -60,7 +32,7 @@ def zip_directory(
                 except Exception as e:
                     raise ValueError(f"fail to zip directory {dir_path}: fail to read file {file_path}") from e
             if minify:
-                source = remove_type_hint(source)
+                source = ast.unparse(ast.parse(source))
             zf.writestr(arcname, source)
     buf.seek(0)
     return buf.read(), base_name
@@ -77,9 +49,9 @@ def embed_directory(
     main_module: str | None = None,
     includes: list[str] = DEFAULT_INCLUDES,
     excludes: list[str] = DEFAULT_EXCLUDES,
-    minify=True,
+    minify=False,
 ) -> str:
-    zip_bytes, base_name = zip_directory(dir_path, includes, excludes, minify)
+    zip_bytes, _ = zip_directory(dir_path, includes, excludes, minify)
     encoded = base64.b64encode(zip_bytes).decode("utf-8")
     snippet = f"""import sys, base64, tempfile
 zip_data = base64.b64decode('{encoded}')
@@ -97,18 +69,19 @@ def embed_path(
     main_module: str | None = None,
     includes: list[str] = DEFAULT_INCLUDES,
     excludes: list[str] = DEFAULT_EXCLUDES,
+    minify=False,
 ) -> str:
     if os.path.isfile(path):
         return embed_singlefile(path)
     else:
-        return embed_directory(path, main_module, includes, excludes)
+        return embed_directory(path, main_module, includes, excludes, minify)
 
 
 def embed_module(
     module_name: str,
     includes: list[str] = DEFAULT_INCLUDES,
     excludes: list[str] = DEFAULT_EXCLUDES,
-    minify=True,
+    minify=False,
 ) -> str:
     mod = importlib.import_module(module_name)
     if mod.__file__ is None:
@@ -126,4 +99,4 @@ def embed(
     try:
         return embed_module(path_or_module, includes, excludes, minify)
     except ModuleNotFoundError:
-        return embed_path(path_or_module, None, includes, excludes)
+        return embed_path(path_or_module, None, includes, excludes, minify)

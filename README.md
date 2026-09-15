@@ -35,9 +35,11 @@ pipx install tinyfan
 
 from tinyfan import asset
 
+
 @asset(schedule="*/3 * * * *")
 def world() -> str:
     return "world"
+
 
 @asset()
 def greeting(world: str):
@@ -59,8 +61,9 @@ manifest generation. Modules imported by an asset module (for example, a shared
 tinyfan src/my_package
 ```
 
-If a project registers assets dynamically or wraps `@asset` in another decorator,
-use `--import-all` to opt into the previous eager-import behavior.
+Automatic package discovery requires statically recognizable Tinyfan `@asset`
+decorators. Dynamic asset registration and custom decorator wrappers are not
+automatically discovered.
 
 # Real World Example (still tiny though!)
 

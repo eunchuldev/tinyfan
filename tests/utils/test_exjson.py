@@ -1,5 +1,6 @@
-from tinyfan.utils.exjson import loads, dumps
 from datetime import datetime
+
+from tinyfan.utils.exjson import dumps, loads
 
 
 def test_exjson():

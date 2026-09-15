@@ -1,4 +1,4 @@
-from typing import Any, TypedDict, NotRequired
+from typing import Any, NotRequired, TypedDict
 
 
 class ExecAction(TypedDict):

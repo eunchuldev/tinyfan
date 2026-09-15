@@ -1,5 +1,5 @@
 import tinyfan
-from tinyfan import ConfigMapRef, ConfigMapKeyRef, SecretRef, SecretKeyRef, cli_arg
+from tinyfan import ConfigMapKeyRef, ConfigMapRef, SecretKeyRef, SecretRef, cli_arg
 
 flow = tinyfan.Flow(
     name="configs",

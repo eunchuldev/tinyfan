@@ -1,9 +1,8 @@
-from datetime import datetime
 import json
-from typing import Mapping, TypeAlias, Sequence
+from collections.abc import Mapping, Sequence
+from datetime import datetime
 
-
-SerializableDict: TypeAlias = (
+type SerializableDict = (
     Mapping[str, "SerializableDict"] | Sequence["SerializableDict"] | str | int | float | bool | datetime | None
 )
 

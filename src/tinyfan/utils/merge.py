@@ -1,9 +1,10 @@
-from typing import TypeVar, Mapping, cast
+from collections.abc import Mapping
+from typing import TypeVar, cast
 
 T = TypeVar("T", bound=Mapping)
 
 
-def deepmerge(dict1: T, dict2: T, *args: T) -> T:
+def deepmerge[T](dict1: T, dict2: T, *args: T) -> T:
     if not isinstance(dict1, dict) or not isinstance(dict2, dict):
         return dict2
     for k in dict2:
@@ -19,8 +20,8 @@ def deepmerge(dict1: T, dict2: T, *args: T) -> T:
 
 def dropnone(d: dict) -> dict:
     dropping = []
-    for k in d:
-        if d[k] is None:
+    for k, v in d.items():
+        if v is None:
             dropping.append(k)
     for k in dropping:
         del d[k]
