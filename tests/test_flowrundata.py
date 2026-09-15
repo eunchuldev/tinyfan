@@ -72,7 +72,51 @@ def test_calendar_interval(schedule, timezone, scheduled_time, expected_start):
     assert not {"schedule", "timezone", "scheduled_time"}.intersection(data)
 
 
-@pytest.mark.parametrize("scheduled_time", ["2026-09-16T00:00:00", "not a timestamp", "{{workflow.scheduledTime}}"])
+@pytest.mark.parametrize(
+    "scheduled_time",
+    [
+        "",
+        "2026-09-16T00:00:00",
+        "not a timestamp",
+        "{{workflow.scheduledTime}}",
+        "2026-03-09 00:00:00 EDT",
+        "2026-03-09 00:00:00 +2500 EDT",
+        "2026-03-09T04:00:00Z trailing-garbage",
+    ],
+)
 def test_invalid_scheduled_time_is_rejected(scheduled_time):
     with pytest.raises(ValueError):
         load_rundata(dumps({"schedule": "@daily", "timezone": "UTC", "scheduled_time": scheduled_time}))
+
+
+@pytest.mark.parametrize(
+    "scheduled_time, expected_end",
+    [
+        ("2026-03-09 00:00:00 -0400 EDT", "2026-03-09T04:00:00Z"),
+        ("2026-03-09 04:00:00 +0000 UTC", "2026-03-09T04:00:00Z"),
+        ("2026-03-09 09:30:00 +0530 +0530", "2026-03-09T04:00:00Z"),
+        ("2026-11-01 01:30:00 -0400 EDT", "2026-11-01T05:30:00Z"),
+        ("2026-11-01 01:30:00 -0500 EST", "2026-11-01T06:30:00Z"),
+        ("2026-03-09 04:00:00.123456 +0000 UTC", "2026-03-09T04:00:00.123456Z"),
+    ],
+)
+def test_backfill_timestamp_matches_rfc3339(scheduled_time, expected_end):
+    envelope = {"schedule": "@daily", "timezone": "America/New_York", "scheduled_time": scheduled_time}
+    actual = load_rundata(dumps(envelope))
+    envelope["scheduled_time"] = expected_end
+    assert actual == load_rundata(dumps(envelope))
+    del envelope["scheduled_time"]
+    envelope["scheduled_time_b64"] = base64.b64encode(scheduled_time.encode("utf-8")).decode("ascii")
+    assert actual == load_rundata(dumps(envelope))
+    assert actual["data_interval_end"].timestamp() == datetime.fromisoformat(expected_end).timestamp()
+
+
+@pytest.mark.parametrize("scheduled_time", ["", '2026-03-09T04:00:00Z", "schedule": "@monthly', "{{workflow.name}}"])
+def test_invalid_encoded_override_is_rejected(scheduled_time):
+    envelope = {
+        "schedule": "@daily",
+        "timezone": "UTC",
+        "scheduled_time_b64": base64.b64encode(scheduled_time.encode("utf-8")).decode("ascii"),
+    }
+    with pytest.raises(ValueError):
+        load_rundata(dumps(envelope))

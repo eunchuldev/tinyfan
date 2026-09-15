@@ -65,6 +65,34 @@ Automatic package discovery requires statically recognizable Tinyfan `@asset`
 decorators. Dynamic asset registration and custom decorator wrappers are not
 automatically discovered.
 
+# Embedded source
+
+Embedded workflows unpack their source into temporary directories, so package
+data works with both `importlib.resources` and paths relative to `__file__`.
+Use `Path(__file__).parent` to locate data; the working directory is unchanged.
+
+Regular packages include their files and subdirectories, including extensionless
+data files. Embedding a nested module includes its top-level package. Standalone
+scripts include their containing directory so sibling imports and data files are
+available; keep scripts in a directory containing only files intended for the
+workflow. Git metadata, `.venv`/`venv`, Python bytecode, and common tool caches are
+excluded by default. Scripts execute as modules, preserving `__file__`, future
+imports, and runtime annotations; `if __name__ == "__main__"` blocks do not run.
+
+The embedding utilities accept `includes` and `excludes` glob patterns relative
+to the bundled directory (the top-level package for nested modules). Excluding a
+directory excludes its contents. Bundled imports take precedence over installed
+copies that have not already been imported. Temporary files are cleaned up on
+normal process exit, and unchanged source produces identical bundle bytes.
+
+Embedding does not resolve third-party dependencies or copy distribution metadata
+such as `.dist-info`. Install dependencies in the container image, including
+packages that need native libraries or `importlib.metadata`. Import-name embedding
+of a standalone module includes only its `.py` file; use a script path or regular
+package for accompanying data. Native libraries and namespace-package import
+names are rejected; use regular packages with `__init__.py`. Keep embedded source
+and data small because generated workflows carry them in an environment variable.
+
 # Runtime metadata
 
 Generated workflows read runtime metadata from the reserved `tinyfan-rundata`
@@ -80,7 +108,12 @@ transport. For packaged workflows, update the Tinyfan version in the container
 image as well.
 
 Intervals are calculated at runtime from the triggering workflow's cron schedule,
-timezone, and `workflow.scheduledTime`. The interval runs from the previous
+timezone, and `workflow.scheduledTime`. If the workflow parameter `cronScheduleTime`
+is present, it takes precedence, supporting the timestamp supplied by
+`argo cron backfill` with its default `--argname`. Both RFC 3339 timestamps and the
+alpha CLI's Go-style timestamps (for example, `2026-03-09 00:00:00 -0400 EDT`)
+are accepted. Invalid or empty supplied values fail instead of falling back.
+The interval runs from the previous
 scheduled occurrence (inclusive) to the current one (exclusive), regardless of
 task delays or retries. Month lengths and leap years are calendar-based; missing
 DST times are skipped and repeated times are distinct occurrences.
@@ -92,6 +125,11 @@ Embedded workflows include croniter's required runtime modules and timezone data
 for the configured zones; no runtime download is needed. Regenerate manifests
 after timezone-data updates. Packaged images must install Tinyfan's dependencies,
 including croniter 6.2.4 or newer and `tzdata`.
+
+Backfill CLI compatibility is version-dependent: use a version supporting
+`spec.schedules` and the configured timezone. Older alpha implementations, such
+as Argo 3.7.0, only read the legacy `spec.schedule` field. Tinyfan does not add a
+duplicate `cronScheduleTime` default argument because the CLI appends it itself.
 
 # Real World Example (still tiny though!)
 

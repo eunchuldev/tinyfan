@@ -12,7 +12,7 @@ import yaml
 if "DISABLE_SSL_CERT_VALIDATION" in os.environ:
     import ssl
 
-    ssl._create_default_https_context = ssl._create_unverified_context
+    ssl._create_default_https_context = ssl._create_unverified_context  # type: ignore
 
 
 def test_additional_properties():

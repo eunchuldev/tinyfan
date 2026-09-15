@@ -173,6 +173,7 @@ def import_asset_modules(location: str):
         sys.path.insert(0, str(parent))
         package = importlib.import_module(".".join(module_parts))
     elif path.is_file():
+        sys.path.insert(0, str(path.resolve().parent))
         spec = importlib.util.spec_from_file_location("__tinyfan_repo__", path)
         if spec is None or spec.loader is None:
             raise ValueError(f"fail to load module from `{location}.`")
@@ -217,7 +218,12 @@ class AssetNode:
             {
                 "schedule": schedule,
                 "timezone": timezone,
-                "scheduled_time": "{{workflow.scheduledTime}}",
+                # A backfill's parent workflow has neither timestamp; defer to the child.
+                "scheduled_time_b64": (
+                    "{{= let ts = 'parameters' in workflow && 'cronScheduleTime' in workflow.parameters"
+                    " ? workflow.parameters.cronScheduleTime : workflow.scheduledTime;"
+                    " ts == nil ? nil : sprig.b64enc(ts) }}"
+                ),
                 "parents": {
                     p.asset.name: f"{{{{tasks.{p.asset.name.replace('_', '-')}.outputs.parameters.rundata}}}}"
                     for p in self.parents

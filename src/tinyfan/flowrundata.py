@@ -1,4 +1,5 @@
 import base64
+import re
 from collections.abc import Mapping
 from datetime import datetime
 from typing import TypedDict, TypeVar, cast
@@ -44,7 +45,16 @@ def load_rundata(text: str) -> FlowRunData:
 
         schedule = rundata.pop("schedule")
         timezone = ZoneInfo(rundata.pop("timezone"))
-        end = datetime.fromisoformat(rundata.pop("scheduled_time"))
+        if "scheduled_time_b64" in rundata:
+            scheduled_time = base64.b64decode(rundata.pop("scheduled_time_b64"), validate=True).decode("utf-8")
+        else:
+            scheduled_time = rundata.pop("scheduled_time")
+        # The alpha backfill CLI emits Go Time.String(), including a zone label.
+        # Its numeric offset, not the possibly ambiguous label, identifies the instant.
+        backfill_time = re.fullmatch(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?) ([+-]\d{4}) \S+", scheduled_time)
+        if backfill_time:
+            scheduled_time = backfill_time[1] + backfill_time[2]
+        end = datetime.fromisoformat(scheduled_time)
         if end.tzinfo is None:
             raise ValueError("Tinyfan scheduled_time must include a UTC offset")
         end = end.astimezone(timezone)

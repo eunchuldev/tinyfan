@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from tinyfan.flowrundata import FlowRunData
 from tinyfan.stores.gcs_pickle import GcsPickleStore
 
 
@@ -45,7 +46,7 @@ def test_gcs_pickle_store_roundtrip() -> None:
     client = FakeClient()
     store = GcsPickleStore("test-bucket", prefix="runs", client=client)
     value = {"hello": ["world", 1]}
-    rundata = {
+    rundata: FlowRunData = {
         "flow_name": "flow",
         "asset_name": "asset",
         "ds": "2026-05-31",
@@ -57,14 +58,14 @@ def test_gcs_pickle_store_roundtrip() -> None:
     assert index["bucket"] == "test-bucket"
     assert index["name"].startswith("runs/flow/asset/2026-05-31T12-30-00-00-00/")
     assert index["name"].endswith(".pickle")
-    assert index["generation"] == 1
+    assert index.get("generation") == 1
     assert client.bucket("test-bucket").blob(index["name"]).content_type == "application/octet-stream"
     assert store.retrieve(index, source_rundata=rundata, target_rundata={}) == value
 
 
 def test_gcs_pickle_store_uses_metadata_blob_name() -> None:
     store = GcsPickleStore("test-bucket", client=FakeClient())
-    rundata = {"metadata": {"blob_name": "/custom/path/value.pkl"}}
+    rundata: FlowRunData = {"metadata": {"blob_name": "/custom/path/value.pkl"}}
 
     index = store.store("value", rundata)
 

@@ -115,7 +115,7 @@ def test_codegen_flow(validate_crds, sample_flow):
 
 
 def test_codegen_asset_inputs_outputs(validate_crds):
-    flow: Flow = Flow("test-io")
+    flow = Flow("test-io")
 
     @asset(
         flow=flow,
@@ -239,7 +239,11 @@ def test_rundata_data_interval(sample_flow):
     assert json.loads(node.rundatatmpl("@daily", "Asia/Seoul")) == {
         "schedule": "@daily",
         "timezone": "Asia/Seoul",
-        "scheduled_time": "{{workflow.scheduledTime}}",
+        "scheduled_time_b64": (
+            "{{= let ts = 'parameters' in workflow && 'cronScheduleTime' in workflow.parameters"
+            " ? workflow.parameters.cronScheduleTime : workflow.scheduledTime;"
+            " ts == nil ? nil : sprig.b64enc(ts) }}"
+        ),
         "parents": {},
         "asset_name": "asset1",
         "flow_name": "test",
@@ -370,6 +374,60 @@ def test_generated_package_runs(tmp_path, monkeypatch, embedded, container_level
         FLOW_REGISTER.pop("runtime-regression", None)
 
 
+def test_embedded_script_with_sibling_and_data(tmp_path, monkeypatch):
+    script = tmp_path / "main.py"
+    script.write_text(
+        "from __future__ import annotations\n"
+        "from pathlib import Path\n"
+        "from dataclasses import dataclass\n"
+        "from tinyfan import Flow, asset\n"
+        "from embed_script_helper import SUFFIX\n"
+        "@dataclass\n"
+        "class Message:\n"
+        "    value: str\n"
+        "flow = Flow('embedded-script')\n"
+        "@asset(flow=flow, schedule='@daily')\n"
+        "def emit_file():\n"
+        "    value = Message(Path(__file__).with_name('DATA').read_text() + SUFFIX).value\n"
+        "    print(value)\n"
+        "    return value",
+        encoding="utf-8",
+    )
+    (tmp_path / "embed_script_helper.py").write_text("SUFFIX = ' world'", encoding="utf-8")
+    (tmp_path / "DATA").write_text("hello", encoding="utf-8")
+    input_path = tmp_path / "input.json"
+    output_path = tmp_path / "rundata.b64"
+    monkeypatch.setattr(sys, "path", sys.path.copy())
+    monkeypatch.setattr("tinyfan.codegen.RUNDATA_INPUT_FILE_PATH", input_path.as_posix())
+    monkeypatch.setattr("tinyfan.codegen.RUNDATA_FILE_PATH", output_path.as_posix())
+    previous = sys.modules.get("__tinyfan_repo__")
+    try:
+        manifest = yaml.safe_load(codegen(location=str(script), embedded=True))
+        pod = yaml.safe_load(manifest["spec"]["workflowSpec"]["podSpecPatch"])["containers"][0]
+        source = next(item["value"] for item in pod["env"] if item["name"] == "TINYFAN_SOURCE")
+        source = source.replace("{{inputs.parameters.asset_name}}", "emit_file")
+        input_path.write_text("{}", encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, "-I", "-S", "-"],
+            input=source,
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "hello world"
+        rundata = loads(base64.b64decode(output_path.read_text()).decode("utf-8"))
+        assert rundata["module_name"] == "__tinyfan_repo__"
+    finally:
+        FLOW_REGISTER.pop("embedded-script", None)
+        sys.modules.pop("embed_script_helper", None)
+        sys.modules.pop("__tinyfan_repo__", None)
+        if previous is not None:
+            sys.modules["__tinyfan_repo__"] = previous
+
+
 def test_internal_input_artifact_is_reserved():
     flow = Flow("reserved-artifact")
 
@@ -390,14 +448,16 @@ def test_internal_input_artifact_is_reserved():
 
 @pytest.mark.parametrize("embedded", [False, True])
 @pytest.mark.parametrize(
-    "scheduled_time, expected_start",
+    "scheduled_time, cron_schedule_time, expected_start",
     [
-        ("2026-03-09T04:00:00Z", "2026-03-08T00:00:00-05:00"),
-        ("2026-11-02T05:00:00Z", "2026-11-01T00:00:00-04:00"),
+        ("2026-03-09T04:00:00Z", None, "2026-03-08T00:00:00-05:00"),
+        ("2026-11-02T05:00:00Z", None, "2026-11-01T00:00:00-04:00"),
+        ("2026-09-16T12:00:00Z", "2026-03-09 00:00:00 -0400 EDT", "2026-03-08T00:00:00-05:00"),
+        (None, "2026-03-09T04:00:00Z", "2026-03-08T00:00:00-05:00"),
     ],
 )
 def test_generated_parent_metadata_transport(
-    tmp_path, monkeypatch, embedded, validate_crds, scheduled_time, expected_start
+    tmp_path, monkeypatch, embedded, validate_crds, scheduled_time, cron_schedule_time, expected_start
 ):
     package_name = "metadata_transport_package"
     package_path = tmp_path / package_name
@@ -440,6 +500,8 @@ def test_generated_parent_metadata_transport(
         manifest_text = codegen(flow=FLOW_REGISTER["metadata-transport"], embedded=embedded)
         validate_crds(manifest_text)
         workflow = yaml.safe_load(manifest_text)["spec"]["workflowSpec"]
+        # The backfill CLI appends this argument itself; do not declare a duplicate.
+        assert not any(p["name"] == "cronScheduleTime" for p in workflow.get("arguments", {}).get("parameters", []))
         templates = {template["name"]: template for template in workflow["templates"]}
         tasks = {task["name"]: task for task in templates["flow"]["dag"]["tasks"]}
         source_template = next(
@@ -452,8 +514,12 @@ def test_generated_parent_metadata_transport(
         outputs = {}
         for name in ("first-source", "second-source", "consumer"):
             params = {item["name"]: item["value"] for item in tasks[name]["arguments"]["parameters"]}
-            # Supply Argo's scheduled timestamp, not the actual task start time.
-            raw = params["rundata"].replace("{{workflow.scheduledTime}}", scheduled_time)
+            # Simulate the selected value of Argo's expression, then execute real Python.
+            envelope = json.loads(params["rundata"])
+            assert "workflow.parameters.cronScheduleTime" in envelope["scheduled_time_b64"]
+            selected_time = cron_schedule_time if cron_schedule_time is not None else scheduled_time
+            envelope["scheduled_time_b64"] = base64.b64encode(selected_time.encode("utf-8")).decode("ascii")
+            raw = dumps(envelope)
             for parent, encoded in outputs.items():
                 raw = raw.replace(f"{{{{tasks.{parent}.outputs.parameters.rundata}}}}", encoded)
             artifact = next(
@@ -488,7 +554,8 @@ def test_generated_parent_metadata_transport(
             result_data = loads(base64.b64decode(encoded, validate=True).decode("utf-8"))
             assert result_data["store_entry_idx"] == payload
             assert result_data["data_interval_start"].isoformat() == expected_start
-            assert result_data["data_interval_end"].timestamp() == datetime.fromisoformat(scheduled_time).timestamp()
+            expected_end = "2026-03-09T04:00:00Z" if cron_schedule_time is not None else scheduled_time
+            assert result_data["data_interval_end"].timestamp() == datetime.fromisoformat(expected_end).timestamp()
             assert result_data["ds"] == expected_start[:10]
             assert result_data["ts"] == expected_start
             assert "parents" not in result_data

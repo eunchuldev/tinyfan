@@ -12,7 +12,7 @@ def _jsonpath(data, path):
 
 def gotmpl[T](tmpl: T, data) -> T:
     if isinstance(tmpl, str):
-        return re.sub(r"\{\{\s*(.*?)\s*\}\}", lambda match: _jsonpath(data, match.group(1)), tmpl)
+        return cast(T, re.sub(r"\{\{\s*(.*?)\s*\}\}", lambda match: _jsonpath(data, match.group(1)), tmpl))
     elif isinstance(tmpl, dict):
         return cast(T, {k: gotmpl(v, data) for k, v in tmpl.items()})
     elif isinstance(tmpl, list):
