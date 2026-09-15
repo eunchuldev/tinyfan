@@ -1,9 +1,11 @@
+import base64
 import importlib
 import json
 import os
 import subprocess
 import sys
 from collections.abc import Generator
+from datetime import datetime
 
 import pytest
 import yaml
@@ -13,6 +15,7 @@ from tinyfan import Flow, asset
 from tinyfan.codegen import AssetTree, codegen
 from tinyfan.config import CLI_CONFIG_STATE
 from tinyfan.flow import FLOW_REGISTER
+from tinyfan.utils.exjson import dumps, loads
 
 
 # type: ignore
@@ -58,7 +61,7 @@ def unknown_arg_flow() -> Generator:
 def gotmpl_values(tree: AssetTree, asset_name: str, schedule: str) -> dict:
     rundata = (
         tree.nodes[asset_name]
-        .rundatatmpl(schedule)
+        .rundatatmpl(schedule, tree.flow.tz)
         .replace("{{=sprig.date(workflow.scheduledTime)}}", "2023-01-01")
         .replace("{{workflow.scheduledTime}}", "2023-01-01T00:00:00")
     )
@@ -117,7 +120,10 @@ def test_codegen_asset_inputs_outputs(validate_crds):
     @asset(
         flow=flow,
         schedule="@daily",
-        inputs={"parameters": [{"name": "message", "value": "hello"}]},
+        inputs={
+            "parameters": [{"name": "message", "value": "hello"}],
+            "artifacts": [{"name": "message-file", "path": "/tmp/message.txt", "raw": {"data": "hello"}}],
+        },
         outputs={"parameters": [{"name": "summary", "valueFrom": {"path": "/tmp/summary.txt"}}]},
     )
     def asset1():  # type: ignore
@@ -136,7 +142,14 @@ def test_codegen_asset_inputs_outputs(validate_crds):
         assert input_params["message"] == {"name": "message", "value": "hello"}
         assert {"rundata", "asset_name", "moduledata"}.issubset(input_params.keys())
         assert output_params["summary"] == {"name": "summary", "valueFrom": {"path": "/tmp/summary.txt"}}
-        assert output_params["rundata"] == {"name": "rundata", "valueFrom": {"path": "/tmp/tinyfan/rundata.json"}}
+        assert output_params["rundata"] == {"name": "rundata", "valueFrom": {"path": "/tmp/tinyfan/rundata.b64"}}
+        input_artifacts = {item["name"]: item for item in template["inputs"]["artifacts"]}
+        assert input_artifacts["tinyfan-rundata"] == {
+            "name": "tinyfan-rundata",
+            "path": "/tmp/tinyfan/input.json",
+            "raw": {"data": "{{inputs.parameters.rundata}}"},
+        }
+        assert input_artifacts["message-file"]["raw"]["data"] == "hello"
     finally:
         FLOW_REGISTER.clear()
 
@@ -223,11 +236,31 @@ def test_codegen_directory_only_imports_asset_modules(tmp_path, monkeypatch, val
 def test_rundata_data_interval(sample_flow):
     tree = AssetTree(sample_flow)
     node = next(iter(tree.nodes.values()))
-    daily = node.rundatatmpl("@daily")
-    assert (
-        daily
-        == """{"ds": "{{=sprig.date('2006-01-02', sprig.dateModify('-86400.0s', sprig.toDate('2006-01-02T15:04:05Z07:00', workflow.scheduledTime)))}}", "ts": "{{=sprig.dateModify('-86400.0s', sprig.toDate('2006-01-02T15:04:05Z07:00', workflow.scheduledTime))}}", "data_interval_start": {"__tinyfan_datetime__": "{{=sprig.dateModify('-86400.0s', sprig.toDate('2006-01-02T15:04:05Z07:00', workflow.scheduledTime))}}"}, "data_interval_end": {"__tinyfan_datetime__": "{{workflow.scheduledTime}}"}, "parents": {}, "asset_name": "asset1", "flow_name": "test", "module_name": "tests.test_codegen"}"""
-    )
+    assert json.loads(node.rundatatmpl("@daily", "Asia/Seoul")) == {
+        "schedule": "@daily",
+        "timezone": "Asia/Seoul",
+        "scheduled_time": "{{workflow.scheduledTime}}",
+        "parents": {},
+        "asset_name": "asset1",
+        "flow_name": "test",
+        "module_name": "tests.test_codegen",
+    }
+
+
+def test_interval_uses_triggering_schedule(sample_flow):
+    sample_flow.assets["asset1"].tz = "Asia/Seoul"
+    sample_flow.assets["asset2"].tz = "America/New_York"
+    sample_flow.assets["asset2"].schedule = "@monthly"
+    manifests = list(yaml.safe_load_all(codegen(flow=sample_flow)))
+    assert len(manifests) == 2
+    for manifest in manifests:
+        spec = manifest["spec"]
+        tasks = spec["workflowSpec"]["templates"][-1]["dag"]["tasks"]
+        assert len(tasks) == 4
+        for task in tasks:
+            envelope = json.loads(next(p["value"] for p in task["arguments"]["parameters"] if p["name"] == "rundata"))
+            assert envelope["schedule"] == spec["schedules"][0]
+            assert envelope["timezone"] == spec["timezone"]
 
 
 def test_depends(sample_flow):
@@ -292,7 +325,9 @@ def test_generated_package_runs(tmp_path, monkeypatch, embedded, container_level
     )
     monkeypatch.setattr(sys, "path", sys.path.copy())
     monkeypatch.setattr(CLI_CONFIG_STATE, "cli_args", {"message": "runtime config preserved"})
-    output_path = tmp_path / "rundata.json"
+    input_path = tmp_path / "input.json"
+    output_path = tmp_path / "rundata.b64"
+    monkeypatch.setattr("tinyfan.codegen.RUNDATA_INPUT_FILE_PATH", input_path.as_posix())
     monkeypatch.setattr("tinyfan.codegen.RUNDATA_FILE_PATH", output_path.as_posix())
     container = {"env": [{"name": "APP_MODE", "value": "review"}]}
     try:
@@ -315,7 +350,8 @@ def test_generated_package_runs(tmp_path, monkeypatch, embedded, container_level
         source = env["TINYFAN_SOURCE"]
         source = source.replace(next(line for line in source.splitlines() if line.startswith("{{=join")), imports)
         source = source.replace("{{inputs.parameters.asset_name}}", "emit_message")
-        source = source.replace("{{inputs.parameters.rundata}}", "{}")
+        assert "{{inputs.parameters.rundata}}" not in source
+        input_path.write_text("{}", encoding="utf-8")
         result = subprocess.run(
             [sys.executable, *(["-I", "-S"] if embedded else []), "-"],
             input=source,
@@ -327,8 +363,136 @@ def test_generated_package_runs(tmp_path, monkeypatch, embedded, container_level
         )
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == "runtime config preserved"
-        assert json.loads(output_path.read_text())["asset_name"] == "emit_message"
+        assert loads(base64.b64decode(output_path.read_text()).decode("utf-8"))["asset_name"] == "emit_message"
         assert container == {"env": [{"name": "APP_MODE", "value": "review"}]}
     finally:
         sys.modules.pop(package_name, None)
         FLOW_REGISTER.pop("runtime-regression", None)
+
+
+def test_internal_input_artifact_is_reserved():
+    flow = Flow("reserved-artifact")
+
+    @asset(
+        flow=flow,
+        schedule="@daily",
+        inputs={"artifacts": [{"name": "tinyfan-rundata", "path": "/tmp/override", "raw": {"data": "{}"}}]},
+    )
+    def source():
+        return 1
+
+    try:
+        with pytest.raises(ValueError, match="internal artifacts: `tinyfan-rundata`"):
+            codegen(flow=flow)
+    finally:
+        FLOW_REGISTER.pop(flow.name, None)
+
+
+@pytest.mark.parametrize("embedded", [False, True])
+@pytest.mark.parametrize(
+    "scheduled_time, expected_start",
+    [
+        ("2026-03-09T04:00:00Z", "2026-03-08T00:00:00-05:00"),
+        ("2026-11-02T05:00:00Z", "2026-11-01T00:00:00-04:00"),
+    ],
+)
+def test_generated_parent_metadata_transport(
+    tmp_path, monkeypatch, embedded, validate_crds, scheduled_time, expected_start
+):
+    package_name = "metadata_transport_package"
+    package_path = tmp_path / package_name
+    package_path.mkdir()
+    package_path.joinpath("__init__.py").write_text(
+        "import os\n"
+        "from tinyfan import Flow, StoreBase, asset\n"
+        "from tinyfan.utils.exjson import loads\n"
+        "class JsonStore(StoreBase):\n"
+        "    @staticmethod\n"
+        "    def id(): return 'test.json'\n"
+        "    def store(self, value, rundata): return value\n"
+        "    def retrieve(self, index, source_rundata, target_rundata): return index\n"
+        'payload = loads(os.environ["TINYFAN_TEST_PAYLOAD"])\n'
+        'flow = Flow("metadata-transport", store=JsonStore(), tz="America/New_York")\n'
+        '@asset(flow=flow, schedule="@daily", metadata=payload)\n'
+        "def first_source(): return payload\n"
+        "@asset(flow=flow, metadata=payload)\n"
+        "def second_source(): return payload\n"
+        "@asset(flow=flow)\n"
+        "def consumer(first_source, second_source, parents):\n"
+        "    assert first_source == second_source == payload\n"
+        "    assert all(parent['metadata'] == payload for parent in parents.values())\n"
+        "    return first_source\n",
+        encoding="utf-8",
+    )
+    payload = {
+        "text": "quote\" slash\\ triple''' newline\n\t\r\x00 $(APP_MODE) {{workflow.name}} {{inputs.parameters.rundata}} 한글🙂",
+        "date": datetime.fromisoformat("2026-09-16T12:00:00+09:00"),
+        "nested": {"values": [None, False, 1, ""]},
+    }
+    monkeypatch.setenv("TINYFAN_TEST_PAYLOAD", dumps(payload))
+    monkeypatch.setattr(sys, "path", sys.path.copy())
+    input_path = tmp_path / "input.json"
+    output_path = tmp_path / "rundata.b64"
+    monkeypatch.setattr("tinyfan.codegen.RUNDATA_INPUT_FILE_PATH", input_path.as_posix())
+    monkeypatch.setattr("tinyfan.codegen.RUNDATA_FILE_PATH", output_path.as_posix())
+    try:
+        codegen(location=str(package_path))
+        manifest_text = codegen(flow=FLOW_REGISTER["metadata-transport"], embedded=embedded)
+        validate_crds(manifest_text)
+        workflow = yaml.safe_load(manifest_text)["spec"]["workflowSpec"]
+        templates = {template["name"]: template for template in workflow["templates"]}
+        tasks = {task["name"]: task for task in templates["flow"]["dag"]["tasks"]}
+        source_template = next(
+            item["value"]
+            for item in yaml.safe_load(workflow["podSpecPatch"])["containers"][0]["env"]
+            if item["name"] == "TINYFAN_SOURCE"
+        )
+        # Linux limits each environment entry to 128 KiB, including its name.
+        assert len(source_template.encode("utf-8")) + len("TINYFAN_SOURCE=") + 1 < 128 * 1024
+        outputs = {}
+        for name in ("first-source", "second-source", "consumer"):
+            params = {item["name"]: item["value"] for item in tasks[name]["arguments"]["parameters"]}
+            # Supply Argo's scheduled timestamp, not the actual task start time.
+            raw = params["rundata"].replace("{{workflow.scheduledTime}}", scheduled_time)
+            for parent, encoded in outputs.items():
+                raw = raw.replace(f"{{{{tasks.{parent}.outputs.parameters.rundata}}}}", encoded)
+            artifact = next(
+                item for item in templates[name]["inputs"]["artifacts"] if item["name"] == "tinyfan-rundata"
+            )
+            raw = artifact["raw"]["data"].replace("{{inputs.parameters.rundata}}", raw)
+            # Later substitutions must not rewrite strings inside parent metadata.
+            raw = raw.replace("{{workflow.name}}", "should-not-replace").replace("$(APP_MODE)", "should-not-replace")
+            assert artifact["path"] == input_path.as_posix()
+            input_path.write_text(raw, encoding="utf-8")
+            imports = ";".join(
+                f"from {item['module']} import {item['name']}" for item in json.loads(params["moduledata"])
+            )
+            source = source_template.replace(
+                next(line for line in source_template.splitlines() if line.startswith("{{=join")), imports
+            ).replace("{{inputs.parameters.asset_name}}", params["asset_name"])
+            assert "{{inputs.parameters.rundata}}" not in source
+            if embedded:
+                # Exercise bundled timezone data even on hosts with a system database.
+                source = "import zoneinfo; zoneinfo.reset_tzpath(())\n" + source
+            result = subprocess.run(
+                [sys.executable, *(["-I", "-S"] if embedded else []), "-"],
+                input=source,
+                cwd=tmp_path,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+            assert result.returncode == 0, result.stderr
+            encoded = output_path.read_text(encoding="ascii")
+            result_data = loads(base64.b64decode(encoded, validate=True).decode("utf-8"))
+            assert result_data["store_entry_idx"] == payload
+            assert result_data["data_interval_start"].isoformat() == expected_start
+            assert result_data["data_interval_end"].timestamp() == datetime.fromisoformat(scheduled_time).timestamp()
+            assert result_data["ds"] == expected_start[:10]
+            assert result_data["ts"] == expected_start
+            assert "parents" not in result_data
+            outputs[name] = encoded
+    finally:
+        sys.modules.pop(package_name, None)
+        FLOW_REGISTER.pop("metadata-transport", None)

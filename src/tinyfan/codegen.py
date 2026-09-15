@@ -1,6 +1,5 @@
 import ast
 import copy
-import datetime
 import importlib.util
 import inspect
 import json
@@ -10,6 +9,7 @@ import sys
 import tokenize
 from pathlib import Path
 from typing import Self
+from zoneinfo import ZoneInfo
 
 import croniter
 
@@ -19,7 +19,6 @@ from .argo_typing import ScriptTemplate, TemplateInputs, TemplateOutputs
 from .config import CLI_CONFIG_STATE, Config, ConfigMapKeyRef, ConfigMapRef, ConfigValue, SecretKeyRef, SecretRef
 from .flowrundata import FlowRunData
 from .utils.embed import embed
-from .utils.exjson import DATETIME_ANNOTATION
 from .utils.merge import deepmerge, dropnone
 from .utils.yaml import dump as yaml_dump
 from .utils.yaml import dump_all as yaml_dump_all
@@ -29,7 +28,8 @@ VALID_DEPENDS_REGEXP = r"^(?!.*\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+)(?!.*\.(?!Succeede
 
 EXTRACT_DEPENDS_REGEXP = r"(?<!\.)\b([A-Za-z0-9_]+)\b"
 
-RUNDATA_FILE_PATH = "/tmp/tinyfan/rundata.json"
+RUNDATA_INPUT_FILE_PATH = "/tmp/tinyfan/input.json"
+RUNDATA_FILE_PATH = "/tmp/tinyfan/rundata.b64"
 INTERNAL_INPUT_PARAMETERS = {"rundata", "asset_name", "moduledata"}
 INTERNAL_OUTPUT_PARAMETERS = {"rundata"}
 
@@ -44,15 +44,17 @@ def merge_template_io(
         if key in ("parameters", "artifacts"):
             if not isinstance(value, list):
                 raise TypeError(f"asset {key} must be a list")
-            if key == "parameters":
-                conflicts = [
-                    param.get("name")
-                    for param in value
-                    if isinstance(param, dict) and param.get("name") in reserved_parameter_names
-                ]
-                if conflicts:
-                    names = ", ".join(f"`{name}`" for name in conflicts)
-                    raise ValueError(f"asset parameters cannot redefine tinyfan internal parameter(s): {names}")
+            reserved_names = (
+                reserved_parameter_names
+                if key == "parameters"
+                else {artifact["name"] for artifact in template_io.get("artifacts", [])}
+            )
+            conflicts = [
+                item.get("name") for item in value if isinstance(item, dict) and item.get("name") in reserved_names
+            ]
+            if conflicts:
+                names = ", ".join(f"`{name}`" for name in conflicts)
+                raise ValueError(f"asset {key} cannot redefine tinyfan internal {key}: {names}")
             result.setdefault(key, [])
             result[key].extend(copy.deepcopy(value))
         elif isinstance(result.get(key), dict) and isinstance(value, dict):
@@ -210,36 +212,20 @@ class AssetNode:
         mod = inspect.getmodule(self.asset.func)
         return mod.__name__ if mod else None
 
-    def rundatatmpl(self, schedule: str):
-        cron = croniter.croniter(schedule, datetime.datetime.now(tz=datetime.UTC))
-        t1 = cron.get_next(datetime.datetime)
-        t2 = cron.get_next(datetime.datetime)
-        duration_sec = (t2 - t1).total_seconds()
-        data_interval_start_tmpl = (
-            f"sprig.dateModify('-{duration_sec}s', sprig.toDate('2006-01-02T15:04:05Z07:00', workflow.scheduledTime))"
-        )
-        return re.sub(
-            r'"(\{\{tasks\.[^.]+\.outputs\.parameters\.rundata\}\})"',
-            r"\1",
-            json.dumps(
-                {
-                    "ds": f"{{{{=sprig.date('2006-01-02', {data_interval_start_tmpl})}}}}",
-                    "ts": f"{{{{={data_interval_start_tmpl}}}}}",
-                    "data_interval_start": {
-                        DATETIME_ANNOTATION: f"{{{{={data_interval_start_tmpl}}}}}",
-                    },
-                    "data_interval_end": {
-                        DATETIME_ANNOTATION: "{{workflow.scheduledTime}}",
-                    },
-                    "parents": {
-                        p.asset.name: f"{{{{tasks.{p.asset.name.replace('_', '-')}.outputs.parameters.rundata}}}}"
-                        for p in self.parents
-                    },
-                    "asset_name": self.asset.name,
-                    "flow_name": self.asset.flow.name,
-                    "module_name": self.asset_module_name(),
-                }
-            ),
+    def rundatatmpl(self, schedule: str, timezone: str):
+        return json.dumps(
+            {
+                "schedule": schedule,
+                "timezone": timezone,
+                "scheduled_time": "{{workflow.scheduledTime}}",
+                "parents": {
+                    p.asset.name: f"{{{{tasks.{p.asset.name.replace('_', '-')}.outputs.parameters.rundata}}}}"
+                    for p in self.parents
+                },
+                "asset_name": self.asset.name,
+                "flow_name": self.asset.flow.name,
+                "module_name": self.asset_module_name(),
+            }
         )
 
     def relatives(self, result: set[Self] | None = None) -> set[Self]:
@@ -343,8 +329,29 @@ class AssetTree:
         if len(self.nodes) == 0:
             return ""
 
+        relatives_by_schedules = self.relatives_by_schedules()
+        for tz, schedule in relatives_by_schedules:
+            if not croniter.croniter.is_valid(schedule):
+                raise ValueError(f"invalid schedule: {schedule!r}")
+            ZoneInfo(tz)
+
         source = ""
         if embedded:
+            source += embed("six")
+            # ponytail: bundle croniter's dateutil imports; install dateutil in the image for broader asset use.
+            source += embed(
+                "dateutil",
+                includes=["__init__.py", "_version.py", "_common.py", "relativedelta.py", "tz/*.py"],
+                minify=True,
+            )
+            source += embed("croniter", includes=["*.py"], minify=True)
+            source += embed(
+                "tzdata",
+                includes=[
+                    "**/__init__.py",
+                    *(f"zoneinfo/{tz}" for tz in sorted({tz for tz, _ in relatives_by_schedules})),
+                ],
+            )
             source += embed("tinyfan", excludes=["codegen.py", "utils/embed.py", "**/__pycache__/*"], minify=False)
         source += (
             "from tinyfan.config import CLI_CONFIG_STATE\n"
@@ -363,15 +370,16 @@ class AssetTree:
             )
         source += (
             "import os\n"
-            "from tinyfan.utils.exjson import dumps, loads\n"
-            "_, rundata = asset.run(loads('''{{inputs.parameters.rundata}}'''))\n"
+            "from tinyfan.flowrundata import encode_rundata, load_rundata\n"
+            f"with open({RUNDATA_INPUT_FILE_PATH!r}, encoding='utf-8') as f:\n"
+            "    rundata = load_rundata(f.read())\n"
+            "_, rundata = asset.run(rundata)\n"
             f"path = '{RUNDATA_FILE_PATH}'\n"
             "os.makedirs(os.path.dirname(path), exist_ok=True)\n"
-            "with open(path, 'w') as f:\n"
-            "    f.write(dumps(rundata))\n"
+            "with open(path, 'w', encoding='ascii') as f:\n"
+            "    f.write(encode_rundata(rundata))\n"
         )
 
-        relatives_by_schedules = self.relatives_by_schedules()
         pod_container: dict = {"name": "main"}
         deepmerge(pod_container, copy.deepcopy(container), copy.deepcopy(self.flow.container or {}))
         pod_container["env"] = [env for env in pod_container.get("env", []) if env["name"] != "TINYFAN_SOURCE"] + [
@@ -486,7 +494,14 @@ class AssetTree:
                                                 "name": "moduledata",
                                                 "value": "{{= nil }}",
                                             },
-                                        ]
+                                        ],
+                                        "artifacts": [
+                                            {
+                                                "name": "tinyfan-rundata",
+                                                "path": RUNDATA_INPUT_FILE_PATH,
+                                                "raw": {"data": "{{inputs.parameters.rundata}}"},
+                                            }
+                                        ],
                                     },
                                     node.asset.inputs,
                                     INTERNAL_INPUT_PARAMETERS,
@@ -521,7 +536,7 @@ class AssetTree:
                                                 "parameters": [
                                                     {
                                                         "name": "rundata",
-                                                        "value": node.rundatatmpl(schedule),
+                                                        "value": node.rundatatmpl(schedule, tz),
                                                     },
                                                     {
                                                         "name": "asset_name",

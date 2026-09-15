@@ -26,13 +26,13 @@ def zip_directory(
         files -= set().union(*map(path.glob, excludes))
         for file_path in map(str, files):
             arcname = os.path.relpath(file_path, start=parent_dir)
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, "rb") as f:
                 try:
                     source = f.read()
                 except Exception as e:
                     raise ValueError(f"fail to zip directory {dir_path}: fail to read file {file_path}") from e
-            if minify:
-                source = ast.unparse(ast.parse(source))
+            if minify and file_path.endswith(".py"):
+                source = ast.unparse(ast.parse(source)).encode("utf-8")
             zf.writestr(arcname, source)
     buf.seek(0)
     return buf.read(), base_name
@@ -52,6 +52,10 @@ def embed_directory(
     minify=False,
 ) -> str:
     zip_bytes, _ = zip_directory(dir_path, includes, excludes, minify)
+    return embed_zip(zip_bytes)
+
+
+def embed_zip(zip_bytes: bytes) -> str:
     encoded = base64.b64encode(zip_bytes).decode("utf-8")
     snippet = f"""import sys, base64, tempfile
 zip_data = base64.b64decode('{encoded}')
@@ -60,7 +64,6 @@ with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp_file:
     tmp_file.write(zip_data)
     sys.path.append(tmp_file.name)
 """
-    # snippet += f'import {main_module or base_name}\n'
     return snippet
 
 
@@ -86,6 +89,11 @@ def embed_module(
     mod = importlib.import_module(module_name)
     if mod.__file__ is None:
         raise ValueError(f"{module_name}.__file__ is None.")
+    if Path(mod.__file__).name != "__init__.py":
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.write(mod.__file__, module_name.replace(".", "/") + ".py")
+        return embed_zip(buf.getvalue())
     pkg_dir = os.path.dirname(mod.__file__)
     return embed_directory(pkg_dir, module_name, includes, excludes, minify)
 

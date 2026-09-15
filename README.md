@@ -65,6 +65,34 @@ Automatic package discovery requires statically recognizable Tinyfan `@asset`
 decorators. Dynamic asset registration and custom decorator wrappers are not
 automatically discovered.
 
+# Runtime metadata
+
+Generated workflows read runtime metadata from the reserved `tinyfan-rundata`
+input artifact at `/tmp/tinyfan/input.json`. Parent metadata is transported as
+base64-encoded JSON, preserving datetime values and literal text through Argo
+parameter substitution. Asset functions and store APIs still receive ordinary
+Python values.
+
+After upgrading, regenerate and apply all workflow manifests together. The
+internal `rundata` output parameter now contains base64-encoded JSON, written to
+`/tmp/tinyfan/rundata.b64`; it is not compatible with the previous plain JSON
+transport. For packaged workflows, update the Tinyfan version in the container
+image as well.
+
+Intervals are calculated at runtime from the triggering workflow's cron schedule,
+timezone, and `workflow.scheduledTime`. The interval runs from the previous
+scheduled occurrence (inclusive) to the current one (exclusive), regardless of
+task delays or retries. Month lengths and leap years are calendar-based; missing
+DST times are skipped and repeated times are distinct occurrences.
+`data_interval_start` and `data_interval_end` are timezone-aware datetimes in the
+schedule's timezone. `ds` is the local start date and `ts` is its ISO timestamp
+including the UTC offset. All tasks in a workflow use that workflow's interval.
+
+Embedded workflows include croniter's required runtime modules and timezone data
+for the configured zones; no runtime download is needed. Regenerate manifests
+after timezone-data updates. Packaged images must install Tinyfan's dependencies,
+including croniter 6.2.4 or newer and `tzdata`.
+
 # Real World Example (still tiny though!)
 
 Comming soon
