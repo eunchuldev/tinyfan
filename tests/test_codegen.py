@@ -12,6 +12,7 @@ import yaml
 from jsonschema.exceptions import ValidationError
 
 from tinyfan import Flow, asset
+from tinyfan.argo_typing import ScriptTemplate
 from tinyfan.codegen import AssetTree, codegen
 from tinyfan.config import CLI_CONFIG_STATE
 from tinyfan.flow import FLOW_REGISTER
@@ -333,7 +334,7 @@ def test_generated_package_runs(tmp_path, monkeypatch, embedded, container_level
     output_path = tmp_path / "rundata.b64"
     monkeypatch.setattr("tinyfan.codegen.RUNDATA_INPUT_FILE_PATH", input_path.as_posix())
     monkeypatch.setattr("tinyfan.codegen.RUNDATA_FILE_PATH", output_path.as_posix())
-    container = {"env": [{"name": "APP_MODE", "value": "review"}]}
+    container: ScriptTemplate = {"env": [{"name": "APP_MODE", "value": "review"}]}
     try:
         # Load through the public directory entry point before testing overrides.
         codegen(location=str(package_path))

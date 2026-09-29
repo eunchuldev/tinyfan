@@ -3,12 +3,12 @@ from datetime import datetime
 
 import pytest
 
-from tinyfan.flowrundata import encode_rundata, load_rundata
+from tinyfan.flowrundata import FlowRunData, encode_rundata, load_rundata
 from tinyfan.utils.exjson import dumps
 
 
 def test_rundata_transport():
-    parent = {
+    parent: FlowRunData = {
         "metadata": {"text": "\"\\\n''' {{workflow.name}} $(APP_MODE) 한글🙂"},
         "store_entry_idx": {"name": 'folder\\quoted"file'},
         "data_interval_start": datetime.fromisoformat("2026-09-16T00:00:00+09:00"),
@@ -64,6 +64,7 @@ def test_invalid_rundata_is_rejected(text):
 )
 def test_calendar_interval(schedule, timezone, scheduled_time, expected_start):
     data = load_rundata(dumps({"schedule": schedule, "timezone": timezone, "scheduled_time": scheduled_time}))
+    assert "data_inerval_start" in data
     assert data["data_interval_start"].isoformat() == expected_start
     assert data["data_interval_end"].timestamp() == datetime.fromisoformat(scheduled_time).timestamp()
     assert data["data_interval_start"].timestamp() < data["data_interval_end"].timestamp()
@@ -108,6 +109,7 @@ def test_backfill_timestamp_matches_rfc3339(scheduled_time, expected_end):
     del envelope["scheduled_time"]
     envelope["scheduled_time_b64"] = base64.b64encode(scheduled_time.encode("utf-8")).decode("ascii")
     assert actual == load_rundata(dumps(envelope))
+    assert "data_interval_end" in actual
     assert actual["data_interval_end"].timestamp() == datetime.fromisoformat(expected_end).timestamp()
 
 

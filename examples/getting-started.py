@@ -6,21 +6,30 @@ import tinyfan
 @tinyfan.asset(
     schedule="*/1 * * * *",
 )
-def target() -> str:
+def fast_target() -> str:
     return "world"
 
 
 @tinyfan.asset(
-    schedule="*/1 * * * *",
+    schedule="*/2 * * * *",
 )
-def target2() -> str:
+def slow_target() -> str:
     return "earth"
 
+@tinyfan.asset(
+    schedule="*/2 * * * *",
+)
+def slow_greeting(fast_target: list[str], slow_target: str):
+    for t in fast_target:
+        print("hello " + t)
+    print("hello " + slow_target)
 
 @tinyfan.asset()
-def greeting(target: str, target2: str):
-    print("hello " + target, "hello " + target2)
-
+def greeting(fast_target: str|None, slow_target: str|None):
+    if slow_target:
+        print("hello " + slow_target)
+    if fast_target:
+        print("hello " + fast_target)
 
 @tinyfan.asset(
     schedule="*/1 * * * *",
