@@ -344,7 +344,6 @@ class AssetTree:
         source = ""
         if embedded:
             source += embed("six")
-            # ponytail: bundle croniter's dateutil imports; install dateutil in the image for broader asset use.
             source += embed(
                 "dateutil",
                 includes=["__init__.py", "_version.py", "_common.py", "relativedelta.py", "tz/*.py"],

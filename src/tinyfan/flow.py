@@ -6,6 +6,7 @@ from typing import Any, TypeVar, cast
 
 from .argo_typing import ScriptTemplate, TemplateInputs, TemplateOutputs
 from .config import Config, ConfigValue
+from .depend import DependExpr
 from .flowrundata import FlowRunData
 from .resources.base import ResourceBase
 from .stores.base import StoreBase
@@ -42,7 +43,7 @@ DEFAULT_FLOW: Flow = Flow(
 
 
 @dataclass
-class Asset[Ret, UMeta, StoreIdx]:
+class Asset[Ret, UMeta, StoreIdx](DependExpr):
     flow: Flow
     func: Callable[..., Ret | Awaitable[Ret]]
     store: StoreBase[Ret, UMeta, StoreIdx]
