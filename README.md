@@ -65,6 +65,70 @@ Automatic package discovery requires statically recognizable Tinyfan `@asset`
 decorators. Dynamic asset registration and custom decorator wrappers are not
 automatically discovered.
 
+# Native Argo options
+
+Use native Argo field names at the level where Argo defines them:
+
+| Tinyfan option | Generated location | Examples |
+| --- | --- | --- |
+| `Flow(workflowSpec={...})` or `codegen(workflowSpec={...})` | `spec.workflowSpec` | `nodeSelector`, `tolerations`, `affinity`, `parallelism`, `templateDefaults` |
+| `@asset(template={...})` | The asset's entry in `workflowSpec.templates` | `nodeSelector`, `tolerations`, `retryStrategy`, `timeout`, pod `metadata` |
+| `@asset(task={...})` | The asset's DAG task | `when`, additional `arguments` |
+| `container={...}` | The script container | `image`, `resources`, `env`, `volumeMounts` |
+
+```python
+from tinyfan import Flow, asset
+
+flow = Flow(
+    "batch",
+    workflowSpec={
+        "nodeSelector": {"nodepool": "batch"},
+        "tolerations": [{"key": "batch", "operator": "Exists", "effect": "NoSchedule"}],
+        "arguments": {"parameters": [{"name": "enabled", "value": "true"}]},
+        "templateDefaults": {"retryStrategy": {"limit": "2"}},
+    },
+)
+
+@asset(
+    flow=flow,
+    schedule="@daily",
+    container={"image": "python:3.12"},
+    template={"nodeSelector": {"nodepool": "high-memory"}, "timeout": "30m"},
+    task={"when": "{{workflow.parameters.enabled}} == true"},
+)
+def report():
+    return "ready"
+```
+
+These dictionaries pass native options through without a field whitelist, so
+additional Argo options do not need new Tinyfan keyword arguments. They must be
+valid for your installed Argo version; see the [Argo field reference](https://argo-workflows.readthedocs.io/en/latest/fields/).
+Template and workflow scheduling inheritance follows Argo's rules. Tinyfan does
+not move pod or task fields into the container.
+
+`Flow.workflowSpec` overrides `codegen(workflowSpec=...)` defaults: dictionaries
+merge recursively, while lists and scalar values are replaced, including empty
+lists, `False`, and zero. Configuration dictionaries are not mutated. Explicit
+`serviceAccountName` arguments take precedence over the corresponding native
+option. Use `workflowSpec.templateDefaults` for defaults shared by asset templates.
+
+Tinyfan rejects options that replace its generated wiring: workflow entrypoint,
+templates and source pod patch; template identity, executable body, inputs,
+outputs, source pod patch and mutex; and task identity, template and dependencies.
+Use the existing `container`, `inputs`, `outputs`, and `depends` arguments for
+those settings. `task.arguments` can add parameters and artifacts, but cannot
+replace Tinyfan's reserved runtime parameters or input artifact. `continueOn` is incompatible with
+Argo's enhanced `depends`; use a condition such as `depends="report.Failed"`.
+
+`when` is an Argo expression and does not infer dependency edges. Declare upstream
+assets through function arguments or `depends`; use Argo task names (underscores
+become hyphens) inside expressions. A parent that did not succeed has empty
+runtime metadata and supplies `None` as its stored value. To skip a consumer
+unless its parent succeeded, use `depends="report.Succeeded"`.
+
+These options require Tinyfan 0.5.1 or newer in both the compiler environment and
+packaged workflow images. Regenerate manifests after upgrading.
+
 # Embedded source
 
 Embedded workflows unpack their source into temporary directories, so package

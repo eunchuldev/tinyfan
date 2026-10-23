@@ -1,4 +1,5 @@
 import base64
+import copy
 import importlib
 import json
 import os
@@ -16,6 +17,7 @@ from tinyfan.argo_typing import ScriptTemplate
 from tinyfan.codegen import AssetTree, codegen
 from tinyfan.config import CLI_CONFIG_STATE
 from tinyfan.flow import FLOW_REGISTER
+from tinyfan.flowrundata import load_rundata
 from tinyfan.utils.exjson import dumps, loads
 
 
@@ -153,6 +155,165 @@ def test_codegen_asset_inputs_outputs(validate_crds):
         assert input_artifacts["message-file"]["raw"]["data"] == "hello"
     finally:
         FLOW_REGISTER.clear()
+
+
+@pytest.mark.parametrize("entrypoint", ["flow", "implicit", "tree"])
+def test_native_argo_options(validate_crds, entrypoint):
+    compile_options = {
+        "nodeSelector": {"kubernetes.io/os": "linux", "pool": "default"},
+        "tolerations": [{"key": "batch", "operator": "Exists", "effect": "NoSchedule"}],
+        "parallelism": 4,
+        "suspend": True,
+        "priority": 5,
+    }
+    flow = Flow(
+        "native-options",
+        workflowSpec={
+            "nodeSelector": {"pool": "batch"},
+            "tolerations": [],
+            "parallelism": 2,
+            "suspend": False,
+            "priority": 0,
+            "arguments": {"parameters": [{"name": "enabled", "value": "true"}]},
+            "templateDefaults": {"retryStrategy": {"limit": "2"}},
+        },
+    )
+
+    @asset(flow=flow, schedule="@daily")
+    def source_asset():
+        return 1
+
+    condition = "{{workflow.parameters.enabled}} == true && 'keep_underscores' == 'keep_underscores'"
+
+    @asset(
+        flow=flow,
+        schedule="@hourly",
+        depends="source_asset.Succeeded",
+        container={"image": "python:3.12", "resources": {"requests": {"cpu": "1"}}},
+        inputs={"parameters": [{"name": "message"}]},
+        template={
+            "nodeSelector": {"pool": "gpu"},
+            "tolerations": [{"key": "gpu", "operator": "Exists", "effect": "NoSchedule"}],
+            "retryStrategy": {"limit": "0"},
+            "metadata": {"labels": {"team": "data"}},
+            "priorityClassName": "batch",
+        },
+        task={"when": condition, "arguments": {"parameters": [{"name": "message", "value": "hello"}]}},
+    )
+    def consumer_asset(source_asset):
+        return source_asset
+
+    options = (compile_options, flow.workflowSpec, consumer_asset.asset.template, consumer_asset.asset.task)
+    original = copy.deepcopy(options)
+    try:
+        if entrypoint == "tree":
+            actual = AssetTree(flow).compile(embedded=False, workflowSpec=compile_options)
+        else:
+            actual = codegen(flow=flow if entrypoint == "flow" else None, workflowSpec=compile_options)
+        validate_crds(actual)
+        manifests = [item for item in yaml.safe_load_all(actual) if item["metadata"]["name"].startswith(flow.name)]
+        assert len(manifests) == 2
+        for manifest in manifests:
+            workflow = manifest["spec"]["workflowSpec"]
+            assert workflow["nodeSelector"] == {"kubernetes.io/os": "linux", "pool": "batch"}
+            assert workflow["tolerations"] == []
+            assert workflow["parallelism"] == 2
+            assert workflow["suspend"] is False
+            assert workflow["priority"] == 0
+            assert workflow["templateDefaults"] == {"retryStrategy": {"limit": "2"}}
+            templates = {item["name"]: item for item in workflow["templates"]}
+            consumer = templates["consumer-asset"]
+            assert {key: consumer[key] for key in consumer_asset.asset.template} == consumer_asset.asset.template
+            assert "nodeSelector" not in templates["source-asset"]
+            assert "when" not in consumer and "nodeSelector" not in consumer["script"]
+            assert consumer["script"]["image"] == "python:3.12"
+            assert consumer["script"]["resources"] == {"requests": {"cpu": "1"}}
+            tasks = {item["name"]: item for item in templates["flow"]["dag"]["tasks"]}
+            task = tasks["consumer-asset"]
+            assert task["when"] == condition
+            assert "when" not in tasks["source-asset"]
+            assert task["depends"] == "source-asset.Succeeded"
+            parameters = {item["name"]: item["value"] for item in task["arguments"]["parameters"]}
+            assert parameters["message"] == "hello"
+            assert parameters["asset_name"] == "consumer_asset"
+            assert {"moduledata", "rundata"}.issubset(parameters)
+        assert options == original
+        assert codegen(flow=flow, workflowSpec=compile_options) == codegen(flow=flow, workflowSpec=compile_options)
+    finally:
+        FLOW_REGISTER.pop(flow.name, None)
+
+
+@pytest.mark.parametrize(
+    "scope, options, error, message",
+    [
+        ("workflowSpec", {"templates": []}, ValueError, "Tinyfan-managed fields: `templates`"),
+        ("workflowSpec", {"podSpecPatch": "{}"}, ValueError, "Tinyfan-managed fields: `podSpecPatch`"),
+        ("workflowSpec", {"templateDefaults": {"script": {}}}, ValueError, "workflowSpec.templateDefaults"),
+        ("template", {"script": {}}, ValueError, "Tinyfan-managed fields: `script`"),
+        ("template", {"container": {}}, ValueError, "Tinyfan-managed fields: `container`"),
+        ("template", {"inputs": {}}, ValueError, "Tinyfan-managed fields: `inputs`"),
+        ("task", {"depends": "source"}, ValueError, "Tinyfan-managed fields: `depends`"),
+        ("task", {"templateRef": {}}, ValueError, "Tinyfan-managed fields: `templateRef`"),
+        ("task", {"continueOn": {"failed": True}}, ValueError, "Tinyfan-managed fields: `continueOn`"),
+        (
+            "task",
+            {"arguments": {"parameters": [{"name": "rundata", "value": "{}"}]}},
+            ValueError,
+            "internal parameters: `rundata`",
+        ),
+        (
+            "task",
+            {"arguments": {"artifacts": [{"name": "tinyfan-rundata", "raw": {"data": "{}"}}]}},
+            ValueError,
+            "internal artifacts: `tinyfan-rundata`",
+        ),
+        ("task", {"arguments": []}, TypeError, "task arguments must be dicts"),
+        ("workflowSpec", [], TypeError, "workflowSpec must be a dict"),
+        ("template", [], TypeError, "template must be a dict"),
+        ("task", [], TypeError, "task must be a dict"),
+    ],
+)
+def test_native_argo_options_protect_generated_wiring(scope, options, error, message):
+    flow = Flow("reserved-options")
+
+    @asset(flow=flow, schedule="@daily")
+    def source():
+        return 1
+
+    setattr(flow if scope == "workflowSpec" else source.asset, scope, options)
+    try:
+        with pytest.raises(error, match=message):
+            codegen(flow=flow)
+    finally:
+        FLOW_REGISTER.pop(flow.name, None)
+
+
+def test_skipped_parent_has_no_stored_value():
+    flow = Flow("skipped-parent")
+
+    @asset(flow=flow, schedule="@daily", task={"when": "false == true"})
+    def maybe_source():
+        raise AssertionError("Argo must skip this asset")
+
+    @asset(flow=flow, depends="maybe_source.Skipped")
+    def consumer(maybe_source, parents):
+        assert maybe_source is None
+        assert parents == {"maybe_source": {}}
+        return "handled skip"
+
+    try:
+        envelope = json.loads(AssetTree(flow).nodes["consumer"].rundatatmpl("@daily", "UTC"))
+        assert envelope["parents"]["maybe_source"] == (
+            "{{=tasks['maybe-source'].status == 'Succeeded'"
+            " ? tasks['maybe-source'].outputs.parameters.rundata : 'e30='}}"
+        )
+        # Substitute Argo's skipped branch, then exercise the real metadata loader and asset.
+        envelope["parents"]["maybe_source"] = "e30="
+        envelope["scheduled_time_b64"] = base64.b64encode(b"2026-10-23T00:00:00Z").decode("ascii")
+        result, _ = consumer.asset.run(load_rundata(json.dumps(envelope)))
+        assert result == "handled skip"
+    finally:
+        FLOW_REGISTER.pop(flow.name, None)
 
 
 def test_codegen_implicit(validate_crds, sample_flow):
@@ -320,9 +481,10 @@ def test_generated_package_runs(tmp_path, monkeypatch, embedded, container_level
         "@dataclass\n"
         "class Message:\n"
         "    value: str\n"
-        'flow = Flow("runtime-regression")\n'
+        'flow = Flow("runtime-regression", workflowSpec={"nodeSelector": {"pool": "batch"}})\n'
         'message = cli_arg("message")\n'
-        '@asset(flow=flow, schedule="@daily")\n'
+        '@asset(flow=flow, schedule="@daily", template={"tolerations": [{"operator": "Exists"}]}, '
+        'task={"when": "true == true"})\n'
         "def emit_message():\n"
         "    print(Message(cast(str, message)).value)\n"
         "    return message\n",
@@ -345,11 +507,14 @@ def test_generated_package_runs(tmp_path, monkeypatch, embedded, container_level
             codegen(flow=flow, embedded=embedded, container=container if container_level == "compile" else None)
         )
         workflow = manifest["spec"]["workflowSpec"]
+        assert workflow["nodeSelector"] == {"pool": "batch"}
+        assert workflow["templates"][0]["tolerations"] == [{"operator": "Exists"}]
         pod = yaml.safe_load(workflow["podSpecPatch"])["containers"][0]
         env = {entry["name"]: entry["value"] for entry in pod["env"]}
         if container_level != "none":
             assert env["APP_MODE"] == "review"
         task = workflow["templates"][-1]["dag"]["tasks"][0]
+        assert task["when"] == "true == true"
         params = {param["name"]: param["value"] for param in task["arguments"]["parameters"]}
         imports = ";".join(f"from {item['module']} import {item['name']}" for item in json.loads(params["moduledata"]))
         source = env["TINYFAN_SOURCE"]
@@ -521,8 +686,8 @@ def test_generated_parent_metadata_transport(
             selected_time = cron_schedule_time if cron_schedule_time is not None else scheduled_time
             envelope["scheduled_time_b64"] = base64.b64encode(selected_time.encode("utf-8")).decode("ascii")
             raw = dumps(envelope)
-            for parent, encoded in outputs.items():
-                raw = raw.replace(f"{{{{tasks.{parent}.outputs.parameters.rundata}}}}", encoded)
+            for parent, reference in envelope["parents"].items():
+                raw = raw.replace(reference, outputs[parent.replace("_", "-")])
             artifact = next(
                 item for item in templates[name]["inputs"]["artifacts"] if item["name"] == "tinyfan-rundata"
             )

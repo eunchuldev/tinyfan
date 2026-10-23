@@ -21,10 +21,12 @@ jobs:
           python-version-file: "pyproject.toml"
       - name: Install the Project
         run: uv sync --all-extras --dev
-      - name: Run tests
-        run: uv run pytest tests
       - name: Build Package
         run: uv build
+      - name: Test installed wheel
+        run: |
+          uv pip install --no-deps --reinstall dist/*.whl
+          uv run --no-sync pytest tests
       - name: Publish Project
         run: uv publish
         env:

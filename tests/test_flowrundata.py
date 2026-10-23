@@ -64,7 +64,7 @@ def test_invalid_rundata_is_rejected(text):
 )
 def test_calendar_interval(schedule, timezone, scheduled_time, expected_start):
     data = load_rundata(dumps({"schedule": schedule, "timezone": timezone, "scheduled_time": scheduled_time}))
-    assert "data_inerval_start" in data
+    assert "data_inerval_start" not in data
     assert data["data_interval_start"].isoformat() == expected_start
     assert data["data_interval_end"].timestamp() == datetime.fromisoformat(scheduled_time).timestamp()
     assert data["data_interval_start"].timestamp() < data["data_interval_end"].timestamp()

@@ -8,7 +8,7 @@ import re
 import sys
 import tokenize
 from pathlib import Path
-from typing import Self
+from typing import Any, Self
 from zoneinfo import ZoneInfo
 
 import croniter
@@ -32,14 +32,51 @@ RUNDATA_INPUT_FILE_PATH = "/tmp/tinyfan/input.json"
 RUNDATA_FILE_PATH = "/tmp/tinyfan/rundata.b64"
 INTERNAL_INPUT_PARAMETERS = {"rundata", "asset_name", "moduledata"}
 INTERNAL_OUTPUT_PARAMETERS = {"rundata"}
+WORKFLOW_RESERVED_FIELDS = {"entrypoint", "templates", "podSpecPatch", "workflowTemplateRef"}
+TEMPLATE_RESERVED_FIELDS = {
+    "name",
+    "script",
+    "container",
+    "containerSet",
+    "dag",
+    "steps",
+    "resource",
+    "suspend",
+    "http",
+    "data",
+    "plugin",
+    "inputs",
+    "outputs",
+    "podSpecPatch",
+    "synchronization",
+}
+TASK_RESERVED_FIELDS = {"name", "template", "templateRef", "inline", "depends", "dependencies", "continueOn"}
+
+
+def argo_options(options: dict[str, Any] | None, scope: str, reserved: set[str]) -> dict[str, Any]:
+    """Copy native Argo options without allowing them to replace Tinyfan's wiring."""
+    if options is None:
+        return {}
+    if not isinstance(options, dict):
+        raise TypeError(f"{scope} must be a dict")
+    conflicts = options.keys() & reserved
+    if conflicts:
+        names = ", ".join(f"`{name}`" for name in sorted(conflicts))
+        raise ValueError(f"{scope} cannot redefine Tinyfan-managed fields: {names}")
+    return copy.deepcopy(options)
 
 
 def merge_template_io(
-    template_io: dict, user_io: TemplateInputs | TemplateOutputs | None, reserved_parameter_names: set[str]
+    template_io: dict,
+    user_io: TemplateInputs | TemplateOutputs | None,
+    reserved_parameter_names: set[str],
+    reserved_artifact_names: set[str] | None = None,
 ) -> dict:
     result = copy.deepcopy(template_io)
     if user_io is None:
         return result
+    if not isinstance(user_io, dict):
+        raise TypeError("asset inputs, outputs, and task arguments must be dicts")
     for key, value in user_io.items():
         if key in ("parameters", "artifacts"):
             if not isinstance(value, list):
@@ -48,6 +85,7 @@ def merge_template_io(
                 reserved_parameter_names
                 if key == "parameters"
                 else {artifact["name"] for artifact in template_io.get("artifacts", [])}
+                | (reserved_artifact_names or set())
             )
             conflicts = [
                 item.get("name") for item in value if isinstance(item, dict) and item.get("name") in reserved_names
@@ -225,7 +263,10 @@ class AssetNode:
                     " ts == nil ? nil : sprig.b64enc(ts) }}"
                 ),
                 "parents": {
-                    p.asset.name: f"{{{{tasks.{p.asset.name.replace('_', '-')}.outputs.parameters.rundata}}}}"
+                    p.asset.name: (
+                        f"{{{{=tasks['{assetname2template(p.asset.name)}'].status == 'Succeeded'"
+                        f" ? tasks['{assetname2template(p.asset.name)}'].outputs.parameters.rundata : 'e30='}}}}"
+                    )
                     for p in self.parents
                 },
                 "asset_name": self.asset.name,
@@ -329,11 +370,29 @@ class AssetTree:
         embedded: bool = True,
         container: ScriptTemplate | None = None,
         serviceAccountName: str | None = None,
+        workflowSpec: dict[str, Any] | None = None,
     ) -> str:
         if container is None:
             container = {}
         if len(self.nodes) == 0:
             return ""
+
+        workflow_options = deepmerge(
+            argo_options(workflowSpec, "codegen workflowSpec", WORKFLOW_RESERVED_FIELDS),
+            argo_options(self.flow.workflowSpec, "flow workflowSpec", WORKFLOW_RESERVED_FIELDS),
+        )
+        if "templateDefaults" in workflow_options:
+            workflow_options["templateDefaults"] = argo_options(
+                workflow_options["templateDefaults"], "workflowSpec.templateDefaults", TEMPLATE_RESERVED_FIELDS
+            )
+        template_options = {
+            name: argo_options(node.asset.template, f"asset `{name}` template", TEMPLATE_RESERVED_FIELDS)
+            for name, node in self.nodes.items()
+        }
+        task_options = {
+            name: argo_options(node.asset.task, f"asset `{name}` task", TASK_RESERVED_FIELDS)
+            for name, node in self.nodes.items()
+        }
 
         relatives_by_schedules = self.relatives_by_schedules()
         for tz, schedule in relatives_by_schedules:
@@ -404,11 +463,13 @@ class AssetTree:
                     "schedules": [schedule],
                     "timezone": tz,
                     "workflowSpec": {
+                        **workflow_options,
                         "entrypoint": "flow",
                         **dropnone({"serviceAccountName": serviceAccountName or self.flow.serviceAccountName}),
                         "podSpecPatch": yaml_dump({"containers": [pod_container]}),
                         "templates": [
                             {
+                                **template_options[node.asset.name],
                                 "name": node.asset.name.replace("_", "-"),
                                 **dropnone({"serviceAccountName": node.asset.serviceAccountName}),
                                 "script": deepmerge(
@@ -535,39 +596,45 @@ class AssetTree:
                                 "dag": {
                                     "tasks": [
                                         {
+                                            **task_options[node.asset.name],
                                             "name": node.asset.name.replace("_", "-"),
                                             "depends": node.depends.replace("_", "-"),
                                             "template": node.asset.name.replace("_", "-"),
-                                            "arguments": {
-                                                "parameters": [
-                                                    {
-                                                        "name": "rundata",
-                                                        "value": node.rundatatmpl(schedule, tz),
-                                                    },
-                                                    {
-                                                        "name": "asset_name",
-                                                        "value": node.asset.name,
-                                                    },
-                                                    {
-                                                        "name": "moduledata",
-                                                        "value": json.dumps(
-                                                            [
-                                                                {
-                                                                    "module": node.asset_module_name(),
-                                                                    "name": node.asset.name,
-                                                                },
-                                                                *(
+                                            "arguments": merge_template_io(
+                                                {
+                                                    "parameters": [
+                                                        {
+                                                            "name": "rundata",
+                                                            "value": node.rundatatmpl(schedule, tz),
+                                                        },
+                                                        {
+                                                            "name": "asset_name",
+                                                            "value": node.asset.name,
+                                                        },
+                                                        {
+                                                            "name": "moduledata",
+                                                            "value": json.dumps(
+                                                                [
                                                                     {
-                                                                        "module": p.asset_module_name(),
-                                                                        "name": p.asset.name,
-                                                                    }
-                                                                    for p in node.parents
-                                                                ),
-                                                            ]
-                                                        ),
-                                                    },
-                                                ]
-                                            },
+                                                                        "module": node.asset_module_name(),
+                                                                        "name": node.asset.name,
+                                                                    },
+                                                                    *(
+                                                                        {
+                                                                            "module": p.asset_module_name(),
+                                                                            "name": p.asset.name,
+                                                                        }
+                                                                        for p in node.parents
+                                                                    ),
+                                                                ]
+                                                            ),
+                                                        },
+                                                    ]
+                                                },
+                                                task_options[node.asset.name].get("arguments"),
+                                                INTERNAL_INPUT_PARAMETERS,
+                                                {"tinyfan-rundata"},
+                                            ),
                                         }
                                         for node in relatives
                                     ]
@@ -593,6 +660,7 @@ def codegen(
     embedded: bool = False,
     container: ScriptTemplate | None = None,
     serviceAccountName: str | None = None,
+    workflowSpec: dict[str, Any] | None = None,
 ) -> str:
     """Generate argocd workflow resource as yaml from tinyfan definitions"""
     if container is None:
@@ -600,15 +668,17 @@ def codegen(
     try:
         CLI_CONFIG_STATE.codegen = True
         if flow:
-            result = AssetTree(flow).compile(embedded, container, serviceAccountName)
+            result = AssetTree(flow).compile(embedded, container, serviceAccountName, workflowSpec)
         elif location:
             import_asset_modules(location)
             result = "\n---\n".join(
-                AssetTree(flow).compile(embedded, container, serviceAccountName) for flow in FLOW_REGISTER.values()
+                AssetTree(flow).compile(embedded, container, serviceAccountName, workflowSpec)
+                for flow in FLOW_REGISTER.values()
             )
         else:
             result = "\n---\n".join(
-                AssetTree(flow).compile(embedded, container, serviceAccountName) for flow in FLOW_REGISTER.values()
+                AssetTree(flow).compile(embedded, container, serviceAccountName, workflowSpec)
+                for flow in FLOW_REGISTER.values()
             )
     finally:
         CLI_CONFIG_STATE.codegen = False

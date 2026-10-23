@@ -28,6 +28,7 @@ class Flow:
     serviceAccountName: str | None = None
     store: StoreBase = field(default_factory=NaiveStore)
     configs: dict[str, Config | ConfigValue | str | None] = field(default_factory=dict)
+    workflowSpec: dict[str, Any] | None = None
 
     def __post_init__(self):
         FLOW_REGISTER[self.name] = self
@@ -55,6 +56,8 @@ class Asset[Ret, UMeta, StoreIdx]:
     serviceAccountName: str | None = None
     inputs: TemplateInputs | None = None
     outputs: TemplateOutputs | None = None
+    template: dict[str, Any] | None = None
+    task: dict[str, Any] | None = None
 
     def __post_init__(self):
         self.name = self.func.__name__
@@ -127,6 +130,8 @@ def asset[Ret, UMeta, StoreIdx](
     serviceAccountName: str | None = None,
     inputs: TemplateInputs | None = None,
     outputs: TemplateOutputs | None = None,
+    template: dict[str, Any] | None = None,
+    task: dict[str, Any] | None = None,
 ) -> Callable[..., AssetFunc[Ret, UMeta, StoreIdx]]:
     def wrapper(func: Callable[..., Ret]) -> AssetFunc[Ret, UMeta, StoreIdx]:
         asset = Asset[Ret, UMeta, StoreIdx](
@@ -141,6 +146,8 @@ def asset[Ret, UMeta, StoreIdx](
             serviceAccountName=serviceAccountName,
             inputs=inputs,
             outputs=outputs,
+            template=template,
+            task=task,
         )
         return AssetFunc(func, asset)
 
